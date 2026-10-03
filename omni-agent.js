@@ -43,7 +43,7 @@ function createOmniRouter({pool}){
       const missionId=newId();
       await pool.query(
         'INSERT INTO missions(id,user_id,command,status,plan) VALUES($1,$2,$3,$4,$5)',
-        [missionId,req.session.user.id,command,'queued',JSON.stringify({...p,owner_mode:owner(req)})]
+        [missionId,req.session.user.id,command,p.approval_required?'blocked':'queued',JSON.stringify({...p,owner_mode:owner(req)})]
       );
       for(let i=0;i<p.steps.length;i++){
         const s=p.steps[i];
@@ -55,7 +55,7 @@ function createOmniRouter({pool}){
       if(p.approval_required){
         await pool.query(
           'INSERT INTO approvals(id,user_id,mission_id,kind,status,payload) VALUES($1,$2,$3,$4,$5,$6)',
-          [newId(),req.session.user.id,missionId,'owner_sensitive_action','pending',JSON.stringify({command})]
+          [newId(),req.session.user.id,missionId,'owner_sensitive_action','pending',JSON.stringify({command,reason:'Sensitive action requires owner approval'})]
         );
       }
       res.status(202).json({mission_id:missionId,status:'queued',plan:p});
@@ -78,6 +78,9 @@ function createOmniRouter({pool}){
         [req.params.id,decision,JSON.stringify({by:req.session.user.id,decision}),req.session.user.id]
       );
       if(!r.rows[0])return res.status(404).json({error:'APPROVAL_NOT_FOUND'});
+      if(r.rows[0].mission_id){
+        await pool.query(decision==='approved' ? "UPDATE missions SET status='queued',updated_at=now() WHERE id=$1 AND status='blocked'" : "UPDATE missions SET status='cancelled',finished_at=now(),updated_at=now() WHERE id=$1 AND status='blocked'",[r.rows[0].mission_id]);
+      }
       res.json(r.rows[0]);
     }catch(e){next(e);}
   });
