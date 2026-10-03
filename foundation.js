@@ -106,7 +106,23 @@ async function ensureFoundation(pool){
     task_id UUID REFERENCES mission_tasks(id) ON DELETE CASCADE,kind TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,decision JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     decided_at TIMESTAMPTZ)`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS ai_runs(
+  await pool.query(`CREATE TABLE IF NOT EXISTS audit_logs(
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT,
+    actor_type TEXT NOT NULL DEFAULT 'user',
+    action TEXT NOT NULL,
+    resource_type TEXT,
+    resource_id TEXT,
+    request_id TEXT,
+    risk TEXT NOT NULL DEFAULT 'low',
+    status TEXT NOT NULL DEFAULT 'success',
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_audit_user_created ON audit_logs(user_id,created_at DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_logs(resource_type,resource_id,created_at DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_audit_risk ON audit_logs(risk,created_at DESC)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS ai_runs(
     id UUID PRIMARY KEY,mission_id UUID REFERENCES missions(id) ON DELETE SET NULL,task_id UUID REFERENCES mission_tasks(id) ON DELETE SET NULL,
     provider TEXT,model TEXT,request JSONB,result JSONB,status TEXT NOT NULL,latency_ms INTEGER,tokens_in INTEGER,tokens_out INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
