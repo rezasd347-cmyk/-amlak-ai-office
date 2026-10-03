@@ -61,7 +61,7 @@ function createRouter(opts){
       await client.query('COMMIT');
     }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
     emit(pool,id,null,'mission.created',{agent:task.agent,action:task.action});
-    res.status(202).json({mission_id:id,status:'running',agent:task.agent,action:task.action,plan:planned});
+    res.status(202).json({mission_id:id,status:'queued',agent:task.agent,action:task.action,plan:planned});
   });
   router.post('/missions/:id/cancel',async(req,res)=>{const m=(await pool.query('SELECT * FROM missions WHERE id=$1',[req.params.id])).rows[0];if(!m)return res.status(404).json({error:'MISSION_NOT_FOUND'});if(!isAdmin(req)&&Number(m.user_id)!==Number(req.session.user.id))return res.status(403).json({error:'FORBIDDEN'});await pool.query("UPDATE missions SET status='cancelled',finished_at=now(),updated_at=now() WHERE id=$1 AND status NOT IN ('finished','failed','cancelled')",[m.id]);await pool.query("UPDATE mission_tasks SET status='cancelled',updated_at=now() WHERE mission_id=$1 AND status IN ('queued','running')",[m.id]);await emit(pool,m.id,null,'mission.cancelled');res.json({ok:true,status:'cancelled'})});
   router.get('/jobs/:id',async(req,res)=>{const r=await pool.query('SELECT * FROM agent_jobs WHERE id=$1',[req.params.id]),j=r.rows[0];if(!j)return res.status(404).json({error:'AGENT_JOB_NOT_FOUND'});if(!isAdmin(req)&&Number(j.user_id)!==Number(req.session.user.id))return res.status(403).json({error:'FORBIDDEN'});res.json(j)});
@@ -102,8 +102,12 @@ async function runMission(pool,id){
       if(status==='blocked') break;
     }catch(e){
       const nextStatus=t.attempts < t.max_attempts ? 'queued' : 'failed';
-      await pool.query("UPDATE mission_tasks SET status=$2,error=$3,finished_at=CASE WHEN $2='failed' THEN now() ELSE finished_at END,locked_at=NULL,updated_at=now() WHERE id=$1",[t.id,nextStatus,String(e.message||e)]);
+      await pool.query("UPDATE mission_tasks SET status=$2,error=$3,finished_at=CASE WHEN $2='failed' THEN now() ELSE NULL END,locked_at=NULL,updated_at=now() WHERE id=$1",[t.id,nextStatus,String(e.message||e)]);
       await emit(pool,id,t.id,nextStatus==='queued'?'task.retry_scheduled':'task.failed',{error:String(e.message||e),attempt:t.attempts,max_attempts:t.max_attempts});
+      if(nextStatus==='queued'){
+        await pool.query("UPDATE missions SET status='queued',updated_at=now() WHERE id=$1 AND status='running'",[id]);
+        break;
+      }
     }
   }
   const left=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status IN ('queued','running')",[id])).rows[0].n;
