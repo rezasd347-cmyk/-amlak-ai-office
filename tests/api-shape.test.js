@@ -78,6 +78,15 @@ test('owner R&D agent catalog is extensible',()=>{
  assert.ok(r.includes('architecture'));
 });
 
+test('mission worker has stale recovery and retry boundaries',()=>{
+ const a=read('agents.js');
+ assert.ok(a.includes('recoverStaleWork'));
+ assert.ok(a.includes('TASK_TIMEOUT'));
+ assert.ok(a.includes('attempts < max_attempts'));
+ assert.ok(a.includes('task.retry_scheduled'));
+ assert.ok(!a.includes("if(busy)return; busy=true;\\n    const client"));
+});
+
 test('Owner Omni is admin-only and keeps sensitive approval gate',()=>{
  const o=fs.readFileSync(require('path').join(__dirname,'..','omni-agent.js'),'utf8');
  assert.ok(o.includes('ADMIN_REQUIRED'));
