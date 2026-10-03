@@ -1,6 +1,7 @@
 const express=require('express');
 const {requireTier,userTier,newId}=require('./foundation');
 const {selectTools,listTools}=require('./tool-registry');
+const {selectAgents}=require('./agent-registry');
 
 function owner(req){return req.session?.user?.role==='admin';}
 
@@ -38,6 +39,7 @@ function createOmniRouter({pool}){
       const command=String(req.body?.command||'').trim();
       if(!command)return res.status(400).json({error:'COMMAND_REQUIRED'});
       const p=plan(command);
+      p.agents=selectAgents(command).map(a=>a.id);
       const missionId=newId();
       await pool.query(
         'INSERT INTO missions(id,user_id,command,status,plan) VALUES($1,$2,$3,$4,$5)',
