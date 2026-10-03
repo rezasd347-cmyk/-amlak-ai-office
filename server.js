@@ -124,6 +124,12 @@ function auth(req,res,next){if(!req.session.user)return res.status(401).json({er
 function admin(req,res,next){if(req.session.user?.role!=='admin')return res.status(403).json({error:'ADMIN_REQUIRED'});next()}
 function visibleForUser(items,req){return req.session.user.role==='admin'?items:items.filter(x=>!x.assigned_to||Number(x.assigned_to)===Number(req.session.user.id))}
 function publicUser(x){const {password_hash,...safe}=x;return safe}
+async function audit(req,{action,resource_type=null,resource_id=null,risk='low',status='success',metadata={}}={}){
+  try{await pool.query('INSERT INTO audit_logs(user_id,actor_type,action,resource_type,resource_id,request_id,risk,status,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[
+    req.session?.user?.id||null,req.session?.user?.role==='admin'?'admin':'user',String(action).slice(0,120),
+    resource_type,resource_id,req.id||null,String(risk).slice(0,20),String(status).slice(0,30),JSON.stringify(metadata)
+  ])}catch(e){console.error('audit log error',e.message)}
+}
 
 async function init(){
   await ensureFoundation(pool);
@@ -242,6 +248,46 @@ function dateRange(from,to){const f=from?new Date(from):new Date(Date.now()-30*8
 function reportFor(userId,from,to){const {f,t}=dateRange(from,to),acts=store.activities.filter(a=>a.user_id==userId&&new Date(a.created_at)>=f&&new Date(a.created_at)<=t),props=store.properties.filter(p=>p.assigned_to==userId),clients=store.clients.filter(c=>c.assigned_to==userId),fu=store.followups.filter(x=>x.assigned_to==userId),inRange=fu.filter(x=>new Date(x.created_at)>=f&&new Date(x.created_at)<=t);const typeCount=ty=>inRange.filter(x=>x.type===ty).length;const completedInRange=fu.filter(x=>x.status==='done'&&new Date(x.completed_at||x.updated_at)>=f&&new Date(x.completed_at||x.updated_at)<=t);return{user:store.staff.find(s=>s.id==userId)?.name||'نامشخص',from:f.toISOString(),to:t.toISOString(),metrics:{new_properties:props.filter(p=>new Date(p.created_at)>=f&&new Date(p.created_at)<=t).length,new_clients:clients.filter(c=>new Date(c.created_at)>=f&&new Date(c.created_at)<=t).length,followups_created:inRange.length,followups_completed:completedInRange.length,followups_overdue:fu.filter(x=>x.status==='open'&&x.due_at&&new Date(x.due_at)<new Date()).length,followups_with_result:completedInRange.filter(x=>x.notes&&String(x.notes).trim()).length,calls:typeCount('تماس'),meetings:typeCount('جلسه'),visits:typeCount('بازدید'),messages:typeCount('پیام'),activity_count:acts.length},activities:acts.slice(-500),followups:inRange}}
 app.get('/api/reports/staff/:id',admin,(req,res)=>res.json(reportFor(req.params.id,req.query.from,req.query.to)));
 app.get('/api/reports/staff/:id/html',admin,(req,res)=>{const r=reportFor(req.params.id,req.query.from,req.query.to);res.type('html').send(`<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><title>گزارش عملکرد ${r.user}</title><style>body{font-family:Tahoma;max-width:900px;margin:30px auto;padding:20px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.card{border:1px solid #ddd;border-radius:12px;padding:16px}.n{font-size:28px;font-weight:bold}@media print{button{display:none}}</style><button onclick="print()">چاپ / ذخیره PDF</button><h1>گزارش عملکرد ${r.user}</h1><p>${r.from.slice(0,10)} تا ${r.to.slice(0,10)}</p><div class="grid">${Object.entries(r.metrics).map(([k,v])=>`<div class="card">${k}<div class="n">${v}</div></div>`).join('')}</div></html>`)});
+app.get('/api/audit',admin,async(req,res,next)=>{
+  try{
+    const limit=Math.min(Math.max(Number(req.query.limit)||100,1),500);
+    const p=[];let where='';
+    if(req.query.risk){p.push(String(req.query.risk));where='WHERE risk=let a=store.activities.slice().sort((x,y)=>new Date(y.created_at)-new Date(x.created_at));if(req.query.user_id)a=a.filter(x=>x.user_id==req.query.user_id);res.json(a.slice(0,500))});
+app.get('/api/dashboard',auth,(req,res)=>{const ps=visibleForUser(store.properties,req),cs=visibleForUser(store.clients,req),fs=visibleForUser(store.followups,req),today=new Date().toISOString().slice(0,10);res.json({properties:ps.filter(x=>x.status==='active').length,clients:cs.length,openFollowups:fs.filter(x=>x.status==='open').length,todayFollowups:fs.filter(x=>x.status==='open'&&String(x.due_at||'').slice(0,10)===today).length,overdue:fs.filter(x=>x.status==='open'&&x.due_at&&new Date(x.due_at)<new Date()).length,newProperties:ps.filter(x=>new Date(x.created_at)>new Date(Date.now()-7*86400000)).length,newClients:cs.filter(x=>new Date(x.created_at)>new Date(Date.now()-7*86400000)).length,staff:store.staff.filter(x=>x.active).length,activities:store.activities.slice(-10).reverse()})});
+app.get('/api/backup',admin,(req,res)=>{res.setHeader('Content-Disposition',`attachment; filename="amlak-backup-${new Date().toISOString().slice(0,10)}.json"`);res.json(store)});
+app.post('/api/restore',admin,async(req,res)=>{const d=req.body;if(!d||!Array.isArray(d.staff)||!Array.isArray(d.properties)||!Array.isArray(d.clients)||!Array.isArray(d.followups))return res.status(400).json({error:'پشتیبان نامعتبر است'});await backup('pre-restore');store=migrate(d);await persist();await audit(req,{action:'restore',resource_type:'app_state',risk:'critical',metadata:{version:SCHEMA_VERSION}});res.json({ok:true,version:SCHEMA_VERSION})});
+app.get('/api/share',admin,(req,res)=>{const host=`${req.protocol}://${req.get('host')}`;res.json({url:host,login_url:`${host}/#login`,note:'دسترسی فقط با حساب فعال سیستم ممکن است.'})});
+
+app.get('/api/plans',(req,res)=>res.json([
+  {id:'free',name:'Free',rank:0,for:['consumer'],features:['جست‌وجوی پایه','مدیریت ملک','CRM پایه','رسانه پایه']},
+  {id:'plus',name:'Plus',rank:1,for:['consumer','agent'],features:['مشاور AI','هوش ملک','محتوا','تور مجازی','طراحی AI']},
+  {id:'pro',name:'Pro',rank:2,for:['agent','investor','developer'],features:['مرکز فرمان','Agentها','Lead Scout','ساخت','سرمایه‌گذاری','بازار','CRM هوشمند']},
+  {id:'office',name:'Office',rank:3,for:['office'],features:['چندکاربره','قرارداد','معاملات','امنیت','Developer/API']},
+  {id:'enterprise',name:'Enterprise',rank:4,for:['office','developer'],features:['حاکمیت AI','Self-Healing','داده جهانی','Digital Twin','اتصال سازمانی']}
+]));
+app.get('/api/account',auth,async(req,res)=>{const s=(await pool.query('SELECT tier,status,account_type,current_period_end FROM subscriptions WHERE user_id=$1',[req.session.user.id])).rows[0]||{tier:'free',status:'active',account_type:'consumer'};res.json({...s,role:req.session.user.role,services:SERVICES.filter(x=>hasTier(s.tier,x.tier))})});
+app.patch('/api/account',auth,async(req,res)=>{const types=['consumer','agent','office','developer','investor','owner','tenant'];const account_type=String(req.body?.account_type||'consumer');if(!types.includes(account_type))return res.status(400).json({error:'ACCOUNT_TYPE_INVALID'});await pool.query('INSERT INTO subscriptions(user_id,tier,account_type,status,updated_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(user_id) DO UPDATE SET account_type=EXCLUDED.account_type,updated_at=now()',[req.session.user.id,userTier(req.session.user),account_type,'active']);req.session.user.account_type=account_type;res.json({ok:true,account_type})});
+app.get('/api/services',auth,async(req,res)=>{const r=await pool.query('SELECT * FROM service_catalog WHERE enabled=true ORDER BY id');res.json(r.rows)});
+app.patch('/api/services/:id',admin,async(req,res)=>{const id=String(req.params.id),enabled=req.body?.enabled;if(typeof enabled!=='boolean')return res.status(400).json({error:'ENABLED_BOOLEAN_REQUIRED'});const r=await pool.query('UPDATE service_catalog SET enabled=$2,updated_at=now() WHERE id=$1 RETURNING *',[id,enabled]);if(!r.rows[0])return res.status(404).json({error:'SERVICE_NOT_FOUND'});res.json(r.rows[0])});
+app.delete('/api/services/:id',admin,async(req,res)=>{const r=await pool.query('UPDATE service_catalog SET enabled=false,updated_at=now() WHERE id=$1 RETURNING id',[String(req.params.id)]);if(!r.rows[0])return res.status(404).json({error:'SERVICE_NOT_FOUND'});res.json({ok:true,id:r.rows[0].id,disabled:true})});
+app.get('/api/subscription',auth,async(req,res)=>{const s=(await pool.query('SELECT tier,status,current_period_end FROM subscriptions WHERE user_id=$1',[req.session.user.id])).rows[0]||{tier:req.session.user.role==='admin'?'enterprise':'free',status:'active'};res.json({...s,tier:req.session.user.role==='admin'?'enterprise':s.tier})});
+app.patch('/api/subscription',admin,async(req,res)=>{const userId=Number(req.body?.user_id),tier=String(req.body?.tier||'free').toLowerCase();if(!Number.isInteger(userId)||!['free','plus','pro','office','enterprise'].includes(tier))return res.status(400).json({error:'SUBSCRIPTION_INVALID'});await pool.query('INSERT INTO subscriptions(user_id,tier,status,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(user_id) DO UPDATE SET tier=EXCLUDED.tier,status=EXCLUDED.status,updated_at=now()',[userId,tier,'active']);res.json({ok:true,user_id:userId,tier,status:'active'})});
+app.use('/api/agents',auth,createAgentRouter({pool,isAdmin:(req)=>req.session.user?.role==='admin'}));
+app.use('/api/omni',auth,createOmniRouter({pool}));
+app.get('/api/agent-registry',auth,requireTier('plus'),(req,res)=>res.json({agents:listAgents()}));
+app.use('/api/guide',auth,createGuideRouter());
+app.use('/api/media-studio',auth,createMediaRouter({pool}));
+app.use('/api/billing',createPaymentRouter({pool}));
+
+app.use(express.static(path.join(__dirname,'public')));
+app.use('/media',express.static(LOCAL_MEDIA_DIR,{maxAge:'7d',immutable:true}));
+app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public/index.html')));
+(async()=>{try{await ensureTables();store=await load();await init();app.listen(PORT,'0.0.0.0',()=>{startMissionWorker(pool);startMaintenanceAgent(pool);console.log(`Amlak AI Office v${SCHEMA_VERSION} running on ${PORT}`)})}catch(e){console.error(e);process.exit(1)}})();
++p.length}
+    const r=await pool.query('SELECT id,user_id,actor_type,action,resource_type,resource_id,request_id,risk,status,metadata,created_at FROM audit_logs '+where+' ORDER BY created_at DESC LIMIT '+limit,p);
+    res.json(r.rows);
+  }catch(e){next(e)}
+});
 app.get('/api/activities',admin,(req,res)=>{let a=store.activities.slice().sort((x,y)=>new Date(y.created_at)-new Date(x.created_at));if(req.query.user_id)a=a.filter(x=>x.user_id==req.query.user_id);res.json(a.slice(0,500))});
 app.get('/api/dashboard',auth,(req,res)=>{const ps=visibleForUser(store.properties,req),cs=visibleForUser(store.clients,req),fs=visibleForUser(store.followups,req),today=new Date().toISOString().slice(0,10);res.json({properties:ps.filter(x=>x.status==='active').length,clients:cs.length,openFollowups:fs.filter(x=>x.status==='open').length,todayFollowups:fs.filter(x=>x.status==='open'&&String(x.due_at||'').slice(0,10)===today).length,overdue:fs.filter(x=>x.status==='open'&&x.due_at&&new Date(x.due_at)<new Date()).length,newProperties:ps.filter(x=>new Date(x.created_at)>new Date(Date.now()-7*86400000)).length,newClients:cs.filter(x=>new Date(x.created_at)>new Date(Date.now()-7*86400000)).length,staff:store.staff.filter(x=>x.active).length,activities:store.activities.slice(-10).reverse()})});
 app.get('/api/backup',admin,(req,res)=>{res.setHeader('Content-Disposition',`attachment; filename="amlak-backup-${new Date().toISOString().slice(0,10)}.json"`);res.json(store)});
