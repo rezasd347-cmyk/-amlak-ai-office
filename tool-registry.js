@@ -19,7 +19,7 @@ const BUILTIN_TOOLS = [
 
 function listTools(){ return BUILTIN_TOOLS.map(x=>({...x})); }
 function getTool(id){ return BUILTIN_TOOLS.find(x=>x.id===id) || null; }
-function selectTools(command){
+function selectTools(command,{tier='free',agentId=null}={}){
   const text=String(command||'').toLowerCase();
   const hits=[];
   for(const t of BUILTIN_TOOLS){
@@ -29,7 +29,10 @@ function selectTools(command){
   if(/بازار|قیمت|رشد/.test(text)) hits.push('market');
   if(/مشتری|پیگیری|crm/.test(text)) hits.push('crm');
   if(/کد|باگ|تست|github|گیت/.test(text)) hits.push('code','qa');
-  return [...new Set(hits)].map(getTool).filter(Boolean);
+  return [...new Set(hits)].map(getTool).filter(Boolean).filter(t=>tierRank(tier)>=tierRank(t.tier)).filter(t=>!agentId || !TOOL_AGENT_DENY[agentId]?.includes(t.id));
 }
 
-module.exports={BUILTIN_TOOLS,listTools,getTool,selectTools};
+const TIER_RANK={free:0,plus:1,pro:2,office:3,enterprise:4};
+const tierRank=t=>TIER_RANK[String(t||'free').toLowerCase()]??0;
+const TOOL_AGENT_DENY={};
+module.exports={BUILTIN_TOOLS,listTools,getTool,selectTools,tierRank};
