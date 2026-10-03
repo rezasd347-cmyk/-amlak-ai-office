@@ -49,3 +49,14 @@ test('plugin-ready Omni foundation is wired',()=>{
   assert.ok(o.includes('approval_required'));
   assert.ok(o.includes('owner_sensitive_action'));
 });
+
+test('agent registry and Guide AI are wired',()=>{
+ const root=require('path').join(__dirname,'..');
+ const a=fs.readFileSync(require('path').join(root,'agent-registry.js'),'utf8');
+ const g=fs.readFileSync(require('path').join(root,'guide-ai.js'),'utf8');
+ const srv=fs.readFileSync(require('path').join(root,'server.js'),'utf8');
+ assert.ok(a.includes('selectAgents'));
+ assert.ok(g.includes('goal-oriented-real-estate-copilot'));
+ assert.ok(srv.includes('/api/agent-registry'));
+ assert.ok(srv.includes('/api/guide'));
+});
