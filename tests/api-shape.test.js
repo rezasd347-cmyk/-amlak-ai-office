@@ -78,6 +78,16 @@ test('owner R&D agent catalog is extensible',()=>{
  assert.ok(r.includes('architecture'));
 });
 
+test('audit foundation and admin audit endpoint are wired',()=>{
+ const f=read('foundation.js');
+ const s=read('server.js');
+ assert.ok(f.includes('CREATE TABLE IF NOT EXISTS audit_logs'));
+ assert.ok(f.includes('idx_audit_user_created'));
+ assert.ok(s.includes('/api/audit'));
+ assert.ok(s.includes("action:'restore'"));
+ assert.ok(s.includes("risk:'critical'"));
+});
+
 test('mission worker has stale recovery and retry boundaries',()=>{
  const a=read('agents.js');
  assert.ok(a.includes('recoverStaleWork'));
