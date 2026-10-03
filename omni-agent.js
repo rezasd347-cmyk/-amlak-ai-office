@@ -47,7 +47,7 @@ function createOmniRouter({pool}){
         const s=p.steps[i];
         await pool.query(
           'INSERT INTO mission_tasks(id,mission_id,task_key,agent_id,action,status,priority,input) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-          [newId(),missionId,s.key,s.action==='report'?'orchestrator':(s.action==='verify'?'qa':s.action),'planned', 'queued',100-i,JSON.stringify({command})]
+          [newId(),missionId,s.key,s.action==='report'?'orchestrator':(s.action==='verify'?'qa':s.action),s.action,'queued',100-i,JSON.stringify({command})]
         );
       }
       if(p.approval_required){
