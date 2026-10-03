@@ -106,13 +106,27 @@ async function load(){
   return migrate(d);
 }
 app.get('/api/ai/status',auth,(req,res)=>res.json({configured:!!process.env.AI_API_KEY,model:process.env.AI_MODEL||null,provider_base:process.env.AI_BASE_URL||'default'}));
-async function audit(req,action,entity,entityId,details=''){
-  const u=actor(req);if(!u)return;
-  store.activities.push({id:next('activities'),user_id:u.id,user_name:u.name,action,entity,entity_id:entityId,details,created_at:now()});
-  if(store.activities.length>10000)store.activities=store.activities.slice(-10000);
-  await persist();
+async function audit(req,actionOrOptions,entity,entityId,details=''){
+  const u=actor(req);
+  const opts=(actionOrOptions&&typeof actionOrOptions==='object')
+    ? actionOrOptions
+    : {action:actionOrOptions,resource_type:entity,resource_id:entityId,metadata:{details}};
+  const action=String(opts.action||'event');
+  if(u){
+    store.activities.push({id:next('activities'),user_id:u.id,user_name:u.name,action,entity:opts.resource_type||entity,entity_id:opts.resource_id||entityId,details:opts.metadata?.details||details,created_at:now()});
+    if(store.activities.length>10000)store.activities=store.activities.slice(-10000);
+    await persist();
+  }
+  try{
+    await pool.query('INSERT INTO audit_logs(user_id,actor_type,action,resource_type,resource_id,request_id,risk,status,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[
+      u?.id||null,u?.role==='admin'?'admin':'user',action.slice(0,120),opts.resource_type||entity||null,
+      String(opts.resource_id??entityId??'')||null,req.id||null,String(opts.risk||'low').slice(0,20),
+      String(opts.status||'success').slice(0,30),JSON.stringify(opts.metadata||{})
+    ]);
+  }catch(e){console.error('audit log error',e.message)}
 }
 app.disable('x-powered-by');
+app.use((req,res,next)=>{req.id=req.get('x-request-id')||crypto.randomUUID();res.setHeader('X-Request-ID',req.id);next()});
 app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');res.setHeader('X-Frame-Options','SAMEORIGIN');next()});
 const rateBuckets=new Map();
 app.use((req,res,next)=>{if(!req.path.startsWith('/api/'))return next();const key=(req.ip||'unknown')+':'+req.path;const nowMs=Date.now();let b=rateBuckets.get(key);if(!b||nowMs-b.t>60000)b={t:nowMs,n:0};b.n++;rateBuckets.set(key,b);if(b.n>120)return res.status(429).json({error:'RATE_LIMITED'});next()});
@@ -124,12 +138,7 @@ function auth(req,res,next){if(!req.session.user)return res.status(401).json({er
 function admin(req,res,next){if(req.session.user?.role!=='admin')return res.status(403).json({error:'ADMIN_REQUIRED'});next()}
 function visibleForUser(items,req){return req.session.user.role==='admin'?items:items.filter(x=>!x.assigned_to||Number(x.assigned_to)===Number(req.session.user.id))}
 function publicUser(x){const {password_hash,...safe}=x;return safe}
-async function audit(req,{action,resource_type=null,resource_id=null,risk='low',status='success',metadata={}}={}){
-  try{await pool.query('INSERT INTO audit_logs(user_id,actor_type,action,resource_type,resource_id,request_id,risk,status,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[
-    req.session?.user?.id||null,req.session?.user?.role==='admin'?'admin':'user',String(action).slice(0,120),
-    resource_type,resource_id,req.id||null,String(risk).slice(0,20),String(status).slice(0,30),JSON.stringify(metadata)
-  ])}catch(e){console.error('audit log error',e.message)}
-}
+
 
 async function init(){
   await ensureFoundation(pool);
