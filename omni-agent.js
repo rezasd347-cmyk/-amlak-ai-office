@@ -1,15 +1,16 @@
 const express=require('express');
-const {requireTier,userTier,newId}=require('./foundation');
+const {userTier,newId}=require('./foundation');
 const {selectTools,listTools}=require('./tool-registry');
 const {selectAgents}=require('./agent-registry');
 const {runAI}=require('./ai-runtime');
 
 function owner(req){return req.session?.user?.role==='admin';}
+function adminOnly(req,res,next){if(!owner(req))return res.status(403).json({error:'ADMIN_REQUIRED'});next();}
 
 function plan(command){
   const tools=selectTools(command);
   const text=String(command||'');
-  const writeRisk=/حذف|پاک|تغییر|انتشار|ارسال|پرداخت|خرید|فروش|قرارداد|deploy|deploy/i.test(text);
+  const writeRisk=/حذف|پاک|تغییر|انتشار|ارسال|پرداخت|خرید|فروش|قرارداد|deploy/i.test(text);
   return {
     intent:text,
     tools:tools.map(t=>t.id),
@@ -26,31 +27,32 @@ function plan(command){
 function createOmniRouter({pool}){
   const router=express.Router();
 
-  router.get('/profile',(req,res)=>res.json({
-    owner_mode:owner(req),
+  router.get('/profile',adminOnly,(req,res)=>res.json({
+    owner_mode:true,
     tier:userTier(req.session?.user),
     role:req.session?.user?.role||'guest',
     mission_model:'mission-plan-execute-verify-report'
   }));
 
-  router.get('/tools',requireTier('pro'),(req,res)=>res.json({tools:listTools()}));
+  router.get('/tools',adminOnly,(req,res)=>res.json({tools:listTools()}));
 
-  router.post('/command',requireTier('pro'),async(req,res,next)=>{
+  router.post('/command',adminOnly,async(req,res,next)=>{
     try{
       const command=String(req.body?.command||'').trim();
       if(!command)return res.status(400).json({error:'COMMAND_REQUIRED'});
       const p=plan(command);
       p.agents=selectAgents(command).map(a=>a.id);
       const missionId=newId();
+      const status=p.approval_required?'blocked':'queued';
       await pool.query(
         'INSERT INTO missions(id,user_id,command,status,plan) VALUES($1,$2,$3,$4,$5)',
-        [missionId,req.session.user.id,command,p.approval_required?'blocked':'queued',JSON.stringify({...p,owner_mode:owner(req)})]
+        [missionId,req.session.user.id,command,status,JSON.stringify({...p,owner_mode:true})]
       );
       for(let i=0;i<p.steps.length;i++){
         const s=p.steps[i];
         await pool.query(
           'INSERT INTO mission_tasks(id,mission_id,task_key,agent_id,action,status,priority,input) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-          [newId(),missionId,s.key,s.action==='report'?'orchestrator':(s.action==='verify'?'qa':s.action),s.action,'queued',100-i,JSON.stringify({command})]
+          [newId(),missionId,s.key,s.action==='report'?'orchestrator':(s.action==='verify'?'qa':s.action),'queued',100-i,JSON.stringify({command})]
         );
       }
       if(p.approval_required){
@@ -59,8 +61,12 @@ function createOmniRouter({pool}){
           [newId(),req.session.user.id,missionId,'owner_sensitive_action','pending',JSON.stringify({command,reason:'Sensitive action requires owner approval'})]
         );
       }
-      const ai=await runAI({instruction:'You are Owner Omni AI. Improve this mission plan without inventing capabilities or executing sensitive actions. Return JSON with summary, risks, next_steps.',input:{command,plan:p},structured:true});
-      res.status(202).json({mission_id:missionId,status:'queued',plan:p,ai});
+      const ai=await runAI({
+        instruction:'You are Owner Omni AI. Improve this mission plan without inventing capabilities or executing sensitive actions. Return JSON with summary, risks, next_steps.',
+        input:{command,plan:p},
+        structured:true
+      });
+      res.status(202).json({mission_id:missionId,status,plan:p,ai});
     }catch(e){next(e);}
   });
 
@@ -81,18 +87,16 @@ function createOmniRouter({pool}){
       );
       if(!r.rows[0])return res.status(404).json({error:'APPROVAL_NOT_FOUND'});
       if(r.rows[0].mission_id){
-        await pool.query(decision==='approved' ? "UPDATE missions SET status='queued',updated_at=now() WHERE id=$1 AND status='blocked'" : "UPDATE missions SET status='cancelled',finished_at=now(),updated_at=now() WHERE id=$1 AND status='blocked'",[r.rows[0].mission_id]);
+        await pool.query(decision==='approved'
+          ? "UPDATE missions SET status='queued',updated_at=now() WHERE id=$1 AND status='blocked'"
+          : "UPDATE missions SET status='cancelled',finished_at=now(),updated_at=now() WHERE id=$1 AND status='blocked'",
+          [r.rows[0].mission_id]);
       }
       res.json(r.rows[0]);
     }catch(e){next(e);}
   });
 
   return router;
-}
-
-function adminOnly(req,res,next){
-  if(req.session?.user?.role!=='admin')return res.status(403).json({error:'ADMIN_REQUIRED'});
-  next();
 }
 
 module.exports={createOmniRouter,plan};
