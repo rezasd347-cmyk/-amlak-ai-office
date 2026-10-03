@@ -136,22 +136,23 @@ app.get('/api/health',async(req,res)=>{try{await pool.query('SELECT 1');res.json
 app.get('/api/property-types',(req,res)=>res.json(PROPERTY_TYPES));
 
 app.post('/api/offline/sync',auth,async(req,res)=>{
- const x=req.body||{};
- const allowed=[
-  {method:'POST',test:p=>p==='/api/properties'},
-  {method:'PATCH',test:p=>/^\/api\/properties\/\d+$/.test(p)},
-  {method:'POST',test:p=>p==='/api/clients'},
-  {method:'PATCH',test:p=>/^\/api\/clients\/\d+$/.test(p)},
-  {method:'POST',test:p=>p==='/api/followups'},
-  {method:'PATCH',test:p=>/^\/api\/followups\/\d+$/.test(p)},
-  {method:'DELETE',test:p=>/^\/api\/followups\/\d+$/.test(p)}
- ];
- const method=String(x.method||'GET').toUpperCase(),path=String(x.path||'');
- if(!allowed.some(v=>v.method===method&&v.test(path)))return res.status(400).json({error:'OFFLINE_ROUTE_NOT_ALLOWED'});
- const key=String(x.idempotency_key||'');if(!key)return res.status(400).json({error:'IDEMPOTENCY_REQUIRED'});
+ const x=req.body||{},method=String(x.method||'GET').toUpperCase(),path=String(x.path||''),body=x.body&&typeof x.body==='object'?x.body:{},key=String(x.idempotency_key||'');
+ const allowed=[['POST',p=>p==='/api/properties'],['PATCH',p=>/^\\/api\\/properties\\/\\d+$/.test(p)],['POST',p=>p==='/api/clients'],['PATCH',p=>/^\\/api\\/clients\\/\\d+$/.test(p)],['POST',p=>p==='/api/followups'],['PATCH',p=>/^\\/api\\/followups\\/\\d+$/.test(p)],['DELETE',p=>/^\\/api\\/followups\\/\\d+$/.test(p)]];
+ if(!allowed.some(([m,test])=>m===method&&test(path)))return res.status(400).json({error:'OFFLINE_ROUTE_NOT_ALLOWED'});
+ if(!key)return res.status(400).json({error:'IDEMPOTENCY_REQUIRED'});
  const prev=await pool.query('SELECT response FROM idempotency_keys WHERE key=$1 AND user_id=$2',[key,req.session.user.id]);
  if(prev.rows[0])return res.json(prev.rows[0].response);
- return res.status(501).json({error:'OFFLINE_SYNC_ADAPTER_PENDING',route:method+' '+path});
+ let result;
+ if(method==='POST'&&path==='/api/properties'){const t=now(),p=normalizeProperty({...body,id:next('properties'),status:body.status||'active',assigned_to:req.session.user.role==='admin'?(body.assigned_to||null):req.session.user.id,created_by:req.session.user.id,created_at:t,updated_at:t});store.properties.push(p);result={id:p.id,property:p}}
+ else if(method==='PATCH'&&/^\\/api\\/properties\\/\\d+$/.test(path)){const p=store.properties.find(v=>String(v.id)===path.split('/').pop());if(!p)return res.status(404).json({error:'PROPERTY_NOT_FOUND'});if(!visibleForUser([p],req).length)return res.status(403).json({error:'FORBIDDEN'});Object.assign(p,body,{updated_at:now()});normalizeProperty(p);result={ok:true,property:p}}
+ else if(method==='POST'&&path==='/api/clients'){const t=now(),c={...body,id:next('clients'),assigned_to:req.session.user.role==='admin'?(body.assigned_to||null):req.session.user.id,created_by:req.session.user.id,created_at:t,updated_at:t};store.clients.push(c);result={id:c.id}}
+ else if(method==='PATCH'&&/^\\/api\\/clients\\/\\d+$/.test(path)){const c=store.clients.find(v=>String(v.id)===path.split('/').pop());if(!c)return res.status(404).json({error:'CLIENT_NOT_FOUND'});if(!visibleForUser([c],req).length)return res.status(403).json({error:'FORBIDDEN'});Object.assign(c,body,{updated_at:now()});result={ok:true}}
+ else if(method==='POST'&&path==='/api/followups'){const f={...body,id:next('followups'),status:body.status||'open',assigned_to:req.session.user.role==='admin'?(body.assigned_to||null):req.session.user.id,created_by:req.session.user.id,created_at:now()};store.followups.push(f);result={id:f.id}}
+ else if(method==='PATCH'&&/^\\/api\\/followups\\/\\d+$/.test(path)){const f=store.followups.find(v=>String(v.id)===path.split('/').pop());if(!f)return res.status(404).json({error:'FOLLOWUP_NOT_FOUND'});if(!visibleForUser([f],req).length)return res.status(403).json({error:'FORBIDDEN'});Object.assign(f,body,{updated_at:now()});result={ok:true}}
+ else if(method==='DELETE'&&/^\\/api\\/followups\\/\\d+$/.test(path)){const i=store.followups.findIndex(v=>String(v.id)===path.split('/').pop());if(i<0)return res.status(404).json({error:'FOLLOWUP_NOT_FOUND'});const f=store.followups[i];if(!visibleForUser([f],req).length)return res.status(403).json({error:'FORBIDDEN'});store.followups.splice(i,1);result={ok:true}}
+ await persist();
+ await pool.query('INSERT INTO idempotency_keys(key,user_id,operation,response,expires_at) VALUES($1,$2,$3,$4,now()+interval \'7 days\') ON CONFLICT(key) DO NOTHING',[key,req.session.user.id,method+' '+path,JSON.stringify(result)]);
+ return res.json(result);
 });
 
 app.post('/api/login',async(req,res)=>{
