@@ -110,6 +110,10 @@ async function audit(req,action,entity,entityId,details=''){
   if(store.activities.length>10000)store.activities=store.activities.slice(-10000);
   await persist();
 }
+app.disable('x-powered-by');
+app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');res.setHeader('X-Frame-Options','SAMEORIGIN');next()});
+const rateBuckets=new Map();
+app.use((req,res,next)=>{if(!req.path.startsWith('/api/'))return next();const key=(req.ip||'unknown')+':'+req.path;const nowMs=Date.now();let b=rateBuckets.get(key);if(!b||nowMs-b.t>60000)b={t:nowMs,n:0};b.n++;rateBuckets.set(key,b);if(b.n>120)return res.status(429).json({error:'RATE_LIMITED'});next()});
 app.use(express.json({limit:'20mb'}));app.use(express.urlencoded({extended:true}));
 app.set('trust proxy',1);
 app.use(session({store:new pgSession({pool,tableName:'user_sessions',createTableIfMissing:true}),secret:process.env.SESSION_SECRET||'change-this-secret',resave:false,saveUninitialized:false,
