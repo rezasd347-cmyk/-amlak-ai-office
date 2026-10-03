@@ -101,7 +101,26 @@ async function ensureFoundation(pool){
   await pool.query(`CREATE TABLE IF NOT EXISTS feature_flags(
     key TEXT PRIMARY KEY,enabled BOOLEAN NOT NULL DEFAULT false,config JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS approvals(
+  await pool.query(`CREATE TABLE IF NOT EXISTS agent_policies(
+    agent_id TEXT PRIMARY KEY,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    required_tier TEXT NOT NULL DEFAULT 'free',
+    allowed_tools JSONB NOT NULL DEFAULT '[]'::jsonb,
+    blocked_tools JSONB NOT NULL DEFAULT '[]'::jsonb,
+    auto_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    approval_risk TEXT NOT NULL DEFAULT 'high',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  `);
+  await pool.query(`CREATE TABLE IF NOT EXISTS tool_policies(
+    tool_id TEXT PRIMARY KEY,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    required_tier TEXT NOT NULL DEFAULT 'free',
+    risk TEXT NOT NULL DEFAULT 'low',
+    approval_required BOOLEAN NOT NULL DEFAULT false,
+    allowed_agents JSONB NOT NULL DEFAULT '[]'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  `);
+    await pool.query(`CREATE TABLE IF NOT EXISTS approvals(
     id UUID PRIMARY KEY,user_id BIGINT NOT NULL,mission_id UUID REFERENCES missions(id) ON DELETE CASCADE,
     task_id UUID REFERENCES mission_tasks(id) ON DELETE CASCADE,kind TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,decision JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -147,7 +166,10 @@ async function ensureFoundation(pool){
   for(const x of [
     ['mission_engine',true],['pro_command_center',true],['lead_scout',false],['ai_self_healing',false]
   ]) await pool.query('INSERT INTO feature_flags(key,enabled) VALUES($1,$2) ON CONFLICT(key) DO NOTHING',x);
-  for(const x of SERVICES) await pool.query('INSERT INTO service_catalog(id,name,required_tier) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,required_tier=EXCLUDED.required_tier,updated_at=now()',[x.id,x.title,x.tier]);
+  for(const x of [
+    ['billing',true,'critical'],['mcp',true,'high'],['code',true,'high'],['qa',false,'high'],['documents',false,'high']
+  ]) await pool.query('INSERT INTO tool_policies(tool_id,enabled,approval_required,risk) VALUES($1,$2,$3,$4) ON CONFLICT(tool_id) DO NOTHING',[x[0],x[1],x[2]==='critical'||x[2]==='high',x[2]]);
+    for(const x of SERVICES) await pool.query('INSERT INTO service_catalog(id,name,required_tier) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,required_tier=EXCLUDED.required_tier,updated_at=now()',[x.id,x.title,x.tier]);
 
 
 
