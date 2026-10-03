@@ -3,6 +3,7 @@ const {AGENTS:CATALOG}=require('./agent-catalog');
 const {requireTier,newId}=require('./foundation');
 
 const AGENTS=CATALOG;
+const {selectAgents}=require('./agent-registry');
 const ROUTES=[
   {agent:'lead-scout',patterns:[/آگهی|ملک.*پیدا|پیدا.*ملک|سرنخ|لید|پلاک\s*ثبتی|مالک|آدرس.*ملک/i],action:'search_property_sources'},
   {agent:'property-intel',patterns:[/قیمت|ارزش|تحلیل.*ملک|مقایسه|رشد|نقدشوندگی/i],action:'analyze_property'},
@@ -52,7 +53,8 @@ function createRouter(opts){
   router.get('/missions/:id',async(req,res)=>{const m=(await pool.query('SELECT * FROM missions WHERE id=$1',[req.params.id])).rows[0];if(!m)return res.status(404).json({error:'MISSION_NOT_FOUND'});if(!isAdmin(req)&&Number(m.user_id)!==Number(req.session.user.id))return res.status(403).json({error:'FORBIDDEN'});const [t,e]=await Promise.all([pool.query('SELECT * FROM mission_tasks WHERE mission_id=$1 ORDER BY priority DESC,created_at',[m.id]),pool.query('SELECT * FROM mission_events WHERE mission_id=$1 ORDER BY created_at DESC LIMIT 200',[m.id])]);res.json({...m,tasks:t.rows,events:e.rows})});
   router.post('/command',requireTier('pro'),async(req,res)=>{
     const command=String(req.body?.command||'').trim();if(!command)return res.status(400).json({error:'COMMAND_REQUIRED'});
-    const task=parseCommand(command),id=newId(),planned=planTasks(task);
+    const task=parseCommand(command),id=newId(),selected=selectAgents(command),planned=planTasks(task);
+    if(selected.length){task.selected_agents=selected.map(a=>a.id);planned.unshift({id:newId(),task_key:'specialist-selection',agent_id:'orchestrator',action:'delegate_specialists',status:'queued',priority:110,input:{agents:task.selected_agents}});}
     const client=await pool.connect();
     try{await client.query('BEGIN');await client.query('INSERT INTO missions(id,user_id,command,status,plan) VALUES($1,$2,$3,$4,$5)',[id,req.session.user.id,command,'queued',JSON.stringify(task)]);
       for(const t of planned)await client.query('INSERT INTO mission_tasks(id,mission_id,task_key,agent_id,action,status,priority,input) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[t.id,id,t.task_key,t.agent_id,t.action,'queued',t.priority,JSON.stringify(t.input)]);
