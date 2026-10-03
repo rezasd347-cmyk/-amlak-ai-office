@@ -78,6 +78,16 @@ test('owner R&D agent catalog is extensible',()=>{
  assert.ok(r.includes('architecture'));
 });
 
+test('agent and tool governance boundaries are wired',()=>{
+ const f=read('foundation.js');
+ const t=read('tool-registry.js');
+ const o=read('omni-agent.js');
+ assert.ok(f.includes('CREATE TABLE IF NOT EXISTS agent_policies'));
+ assert.ok(f.includes('CREATE TABLE IF NOT EXISTS tool_policies'));
+ assert.ok(t.includes('tierRank(tier)>=tierRank(t.tier)'));
+ assert.ok(o.includes("tier:'enterprise'"));
+});
+
 test('audit foundation and admin audit endpoint are wired',()=>{
  const f=read('foundation.js');
  const s=read('server.js');
