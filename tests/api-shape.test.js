@@ -78,6 +78,13 @@ test('owner R&D agent catalog is extensible',()=>{
  assert.ok(r.includes('architecture'));
 });
 
+test('audit supports legacy calls and request correlation',()=>{
+ const s=read('server.js');
+ assert.ok(s.includes('function audit(req,actionOrOptions'));
+ assert.ok(s.includes("X-Request-ID"));
+ assert.ok(s.includes('audit_logs'));
+});
+
 test('agent and tool governance boundaries are wired',()=>{
  const f=read('foundation.js');
  const t=read('tool-registry.js');
