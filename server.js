@@ -21,6 +21,7 @@ const {createPaymentRouter}=require('./payment-gateway');
 const {runMaintenance,startMaintenanceAgent}=require('./maintenance-agent');
 
 const app=express();
+if(process.env.NODE_ENV==='production'&&!process.env.SESSION_SECRET) throw new Error('SESSION_SECRET_REQUIRED_IN_PRODUCTION');
 const PORT=Number(process.env.PORT||10000);
 const SCHEMA_VERSION=3;
 const MAX_FILE=20*1024*1024;
