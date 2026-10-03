@@ -257,7 +257,7 @@ app.get('/api/subscription',auth,async(req,res)=>{const s=(await pool.query('SEL
 app.patch('/api/subscription',admin,async(req,res)=>{const userId=Number(req.body?.user_id),tier=String(req.body?.tier||'free').toLowerCase();if(!Number.isInteger(userId)||!['free','plus','pro','office','enterprise'].includes(tier))return res.status(400).json({error:'SUBSCRIPTION_INVALID'});await pool.query('INSERT INTO subscriptions(user_id,tier,status,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(user_id) DO UPDATE SET tier=EXCLUDED.tier,status=EXCLUDED.status,updated_at=now()',[userId,tier,'active']);res.json({ok:true,user_id:userId,tier,status:'active'})});
 app.use('/api/agents',auth,createAgentRouter({pool,isAdmin:(req)=>req.session.user?.role==='admin'}));
 app.use('/api/omni',auth,createOmniRouter({pool}));
-app.get('/api/agent-registry',auth,requireTier('pro'),(req,res)=>res.json({agents:listAgents()}));
+app.get('/api/agent-registry',auth,requireTier('plus'),(req,res)=>res.json({agents:listAgents()}));
 app.use('/api/guide',auth,createGuideRouter());
 app.use('/api/media-studio',auth,createMediaRouter({pool}));
 app.use('/api/billing',createPaymentRouter({pool}));
