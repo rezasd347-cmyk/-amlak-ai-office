@@ -2,6 +2,7 @@ const express=require('express');
 const {requireTier,userTier,newId}=require('./foundation');
 const {selectTools,listTools}=require('./tool-registry');
 const {selectAgents}=require('./agent-registry');
+const {runAI}=require('./ai-runtime');
 
 function owner(req){return req.session?.user?.role==='admin';}
 
@@ -58,7 +59,8 @@ function createOmniRouter({pool}){
           [newId(),req.session.user.id,missionId,'owner_sensitive_action','pending',JSON.stringify({command,reason:'Sensitive action requires owner approval'})]
         );
       }
-      res.status(202).json({mission_id:missionId,status:'queued',plan:p});
+      const ai=await runAI({instruction:'You are Owner Omni AI. Improve this mission plan without inventing capabilities or executing sensitive actions. Return JSON with summary, risks, next_steps.',input:{command,plan:p},structured:true});
+      res.status(202).json({mission_id:missionId,status:'queued',plan:p,ai});
     }catch(e){next(e);}
   });
 
