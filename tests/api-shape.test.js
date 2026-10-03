@@ -105,6 +105,12 @@ test('audit foundation and admin audit endpoint are wired',()=>{
  assert.ok(s.includes("risk:'critical'"));
 });
 
+test('mission retry requeues the mission for another worker pass',()=>{
+ const a=read('agents.js');
+ assert.ok(a.includes("UPDATE missions SET status='queued'"));
+ assert.ok(a.includes("if(nextStatus==='queued')"));
+});
+
 test('mission worker has stale recovery and retry boundaries',()=>{
  const a=read('agents.js');
  assert.ok(a.includes('recoverStaleWork'));
