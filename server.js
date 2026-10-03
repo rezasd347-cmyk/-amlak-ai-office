@@ -137,7 +137,7 @@ app.get('/api/property-types',(req,res)=>res.json(PROPERTY_TYPES));
 
 app.post('/api/offline/sync',auth,async(req,res)=>{
  const x=req.body||{},method=String(x.method||'GET').toUpperCase(),path=String(x.path||''),body=x.body&&typeof x.body==='object'?x.body:{},key=String(x.idempotency_key||'');
- const allowed=[['POST',p=>p==='/api/properties'],['PATCH',p=>/^\\/api\\/properties\\/\\d+$/.test(p)],['POST',p=>p==='/api/clients'],['PATCH',p=>/^\\/api\\/clients\\/\\d+$/.test(p)],['POST',p=>p==='/api/followups'],['PATCH',p=>/^\\/api\\/followups\\/\\d+$/.test(p)],['DELETE',p=>/^\\/api\\/followups\\/\\d+$/.test(p)]];
+ const allowed=[['POST',p=>p==='/api/properties'],['PATCH',p=>/^\/api\/properties\/\d+$/.test(p)],['POST',p=>p==='/api/clients'],['PATCH',p=>/^\/api\/clients\/\d+$/.test(p)],['POST',p=>p==='/api/followups'],['PATCH',p=>/^\/api\/followups\/\d+$/.test(p)],['DELETE',p=>/^\/api\/followups\/\d+$/.test(p)]];
  if(!allowed.some(([m,test])=>m===method&&test(path)))return res.status(400).json({error:'OFFLINE_ROUTE_NOT_ALLOWED'});
  if(!key)return res.status(400).json({error:'IDEMPOTENCY_REQUIRED'});
  const prev=await pool.query('SELECT response FROM idempotency_keys WHERE key=$1 AND user_id=$2',[key,req.session.user.id]);
