@@ -19,6 +19,7 @@ const {createGuideRouter}=require('./guide-ai');
 const {createMediaRouter}=require('./media-studio');
 const {createPaymentRouter}=require('./payment-gateway');
 const {runMaintenance,startMaintenanceAgent}=require('./maintenance-agent');
+const {runAI}=require('./ai-runtime');
 
 const app=express();
 if(process.env.NODE_ENV==='production'&&!process.env.SESSION_SECRET) throw new Error('SESSION_SECRET_REQUIRED_IN_PRODUCTION');
@@ -104,6 +105,7 @@ async function load(){
   }
   return migrate(d);
 }
+app.get('/api/ai/status',auth,(req,res)=>res.json({configured:!!process.env.AI_API_KEY,model:process.env.AI_MODEL||null,provider_base:process.env.AI_BASE_URL||'default'}));
 async function audit(req,action,entity,entityId,details=''){
   const u=actor(req);if(!u)return;
   store.activities.push({id:next('activities'),user_id:u.id,user_name:u.name,action,entity,entity_id:entityId,details,created_at:now()});
