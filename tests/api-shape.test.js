@@ -28,7 +28,7 @@ test('command center tier gating is present in UI',()=>{
 
 test('all server-side JavaScript parses',()=>{
   const {execFileSync}=require('child_process');
-  for(const f of ['server.js','foundation.js','agents.js','service-catalog.js','media-studio.js','maintenance-agent.js','payment-gateway.js','agent-catalog.js','tool-registry.js','omni-agent.js']) execFileSync(process.execPath,['--check',require('path').join(__dirname,'..',f)],{stdio:'pipe'});
+  for(const f of ['server.js','foundation.js','agents.js','service-catalog.js','media-studio.js','maintenance-agent.js','payment-gateway.js','agent-catalog.js','tool-registry.js','omni-agent.js','ai-runtime.js']) execFileSync(process.execPath,['--check',require('path').join(__dirname,'..',f)],{stdio:'pipe'});
 });
 test('resilience boundaries are present',()=>{
   const s=fs.readFileSync(require('path').join(__dirname,'..','server.js'),'utf8');
@@ -59,4 +59,11 @@ test('agent registry and Guide AI are wired',()=>{
  assert.ok(g.includes('goal-oriented-real-estate-copilot'));
  assert.ok(srv.includes('/api/agent-registry'));
  assert.ok(srv.includes('/api/guide'));
+});
+
+test('AI runtime is provider agnostic and fail-closed',()=>{
+ const a=fs.readFileSync(require('path').join(__dirname,'..','ai-runtime.js'),'utf8');
+ assert.ok(a.includes('AI_API_KEY'));
+ assert.ok(a.includes('AI_BASE_URL'));
+ assert.ok(a.includes('AI_PROVIDER_NOT_CONFIGURED'));
 });
