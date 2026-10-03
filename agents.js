@@ -68,9 +68,18 @@ function createRouter(opts){
   router.post('/jobs/:id/cancel',async(req,res)=>{const r=await pool.query('SELECT * FROM agent_jobs WHERE id=$1',[req.params.id]),j=r.rows[0];if(!j)return res.status(404).json({error:'AGENT_JOB_NOT_FOUND'});if(!isAdmin(req)&&Number(j.user_id)!==Number(req.session.user.id))return res.status(403).json({error:'FORBIDDEN'});await pool.query("UPDATE agent_jobs SET status='cancelled',finished_at=now() WHERE id=$1 AND status NOT IN ('finished','failed','cancelled')",[j.id]);res.json({ok:true,status:'cancelled'})});
   return router;
 }
+async function recoverStaleWork(pool){
+  // Recover tasks/missions left running by a crashed worker or process restart.
+  await pool.query("UPDATE mission_tasks SET status='queued',locked_at=NULL,updated_at=now() WHERE status='running' AND locked_at < now() - interval '10 minutes' AND attempts < max_attempts");
+  await pool.query("UPDATE mission_tasks SET status='failed',error=COALESCE(error,'TASK_TIMEOUT'),finished_at=now(),updated_at=now() WHERE status='running' AND locked_at < now() - interval '10 minutes' AND attempts >= max_attempts");
+  await pool.query("UPDATE missions m SET status='queued',updated_at=now() WHERE m.status='running' AND m.updated_at < now() - interval '10 minutes' AND EXISTS (SELECT 1 FROM mission_tasks t WHERE t.mission_id=m.id AND t.status='queued')");
+}
 async function startMissionWorker(pool){
   let busy=false;
   setInterval(async()=>{
+    if(busy)return; busy=true;
+    try{await recoverStaleWork(pool)}catch(e){console.error('stale mission recovery error',e)}
+
     if(busy)return; busy=true;
     const client=await pool.connect();
     try{
@@ -83,11 +92,21 @@ async function startMissionWorker(pool){
 }
 async function runMission(pool,id){
   await pool.query("UPDATE missions SET status='running',started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=$1 AND status IN ('queued','running')",[id]);
-  const tasks=(await pool.query("SELECT * FROM mission_tasks WHERE mission_id=$1 AND status='queued' ORDER BY priority DESC,created_at",[id])).rows;
+  const tasks=(await pool.query("SELECT * FROM mission_tasks WHERE mission_id=$1 AND status='queued' AND attempts < max_attempts ORDER BY priority DESC,created_at",[id])).rows;
   for(const t of tasks){
     const current=(await pool.query('SELECT status FROM missions WHERE id=$1',[id])).rows[0];if(!current||current.status==='cancelled')break;
     await pool.query("UPDATE mission_tasks SET status='running',started_at=now(),locked_at=now(),attempts=attempts+1,updated_at=now() WHERE id=$1",[t.id]);await emit(pool,id,t.id,'task.started',{agent:t.agent_id,action:t.action});
-    try{const out=await executeTask(pool,t);const status=out.status==='blocked'?'blocked':'finished';await pool.query("UPDATE mission_tasks SET status=$2,output=$3,finished_at=now(),updated_at=now() WHERE id=$1",[t.id,status,JSON.stringify(out)]);await emit(pool,id,t.id,'task.finished',{status,output:out})}catch(e){await pool.query("UPDATE mission_tasks SET status='failed',error=$2,finished_at=now(),updated_at=now() WHERE id=$1",[t.id,String(e.message||e)]);await emit(pool,id,t.id,'task.failed',{error:String(e.message||e)})}
+    try{
+      const out=await executeTask(pool,t);
+      const status=out.status==='blocked'?'blocked':'finished';
+      await pool.query("UPDATE mission_tasks SET status=$2,output=$3,finished_at=now(),locked_at=NULL,updated_at=now() WHERE id=$1",[t.id,status,JSON.stringify(out)]);
+      await emit(pool,id,t.id,'task.finished',{status,output:out,attempt:t.attempts});
+      if(status==='blocked') break;
+    }catch(e){
+      const nextStatus=t.attempts < t.max_attempts ? 'queued' : 'failed';
+      await pool.query("UPDATE mission_tasks SET status=$2,error=$3,finished_at=CASE WHEN $2='failed' THEN now() ELSE finished_at END,locked_at=NULL,updated_at=now() WHERE id=$1",[t.id,nextStatus,String(e.message||e)]);
+      await emit(pool,id,t.id,nextStatus==='queued'?'task.retry_scheduled':'task.failed',{error:String(e.message||e),attempt:t.attempts,max_attempts:t.max_attempts});
+    }
   }
   const left=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status IN ('queued','running')",[id])).rows[0].n;
   const failed=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status='failed'",[id])).rows[0].n;
