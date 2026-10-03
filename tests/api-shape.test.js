@@ -28,7 +28,7 @@ test('command center is Pro gated in UI',()=>{
 
 test('all server-side JavaScript parses',()=>{
   const {execFileSync}=require('child_process');
-  for(const f of ['server.js','foundation.js','agents.js','service-catalog.js','media-studio.js','maintenance-agent.js','payment-gateway.js','agent-catalog.js']) execFileSync(process.execPath,['--check',require('path').join(__dirname,'..',f)],{stdio:'pipe'});
+  for(const f of ['server.js','foundation.js','agents.js','service-catalog.js','media-studio.js','maintenance-agent.js','payment-gateway.js','agent-catalog.js','tool-registry.js','omni-agent.js']) execFileSync(process.execPath,['--check',require('path').join(__dirname,'..',f)],{stdio:'pipe'});
 });
 test('resilience boundaries are present',()=>{
   const s=fs.readFileSync(require('path').join(__dirname,'..','server.js'),'utf8');
@@ -36,4 +36,16 @@ test('resilience boundaries are present',()=>{
   assert.ok(s.includes("/api/billing"));
   const p=fs.readFileSync(require('path').join(__dirname,'..','package.json'),'utf8');
   assert.ok(p.includes("connect-pg-simple"));
+});
+
+test('plugin-ready Omni foundation is wired',()=>{
+  const s=fs.readFileSync(require('path').join(__dirname,'..','server.js'),'utf8');
+  assert.ok(s.includes("require('./omni-agent')"));
+  assert.ok(s.includes("/api/omni"));
+  const t=fs.readFileSync(require('path').join(__dirname,'..','tool-registry.js'),'utf8');
+  assert.ok(t.includes('BUILTIN_TOOLS'));
+  assert.ok(t.includes('selectTools'));
+  const o=fs.readFileSync(require('path').join(__dirname,'..','omni-agent.js'),'utf8');
+  assert.ok(o.includes('approval_required'));
+  assert.ok(o.includes('owner_sensitive_action'));
 });
