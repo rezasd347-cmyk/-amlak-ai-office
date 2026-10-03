@@ -8,7 +8,7 @@ function owner(req){return req.session?.user?.role==='admin';}
 function adminOnly(req,res,next){if(!owner(req))return res.status(403).json({error:'ADMIN_REQUIRED'});next();}
 
 function plan(command){
-  const tools=selectTools(command);
+  const tools=selectTools(command,{tier:'enterprise',agentId:'owner-omni'});
   const text=String(command||'');
   const writeRisk=/حذف|پاک|تغییر|انتشار|ارسال|پرداخت|خرید|فروش|قرارداد|deploy/i.test(text);
   return {
