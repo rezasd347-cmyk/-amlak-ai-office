@@ -79,8 +79,6 @@ async function startMissionWorker(pool){
   setInterval(async()=>{
     if(busy)return; busy=true;
     try{await recoverStaleWork(pool)}catch(e){console.error('stale mission recovery error',e)}
-
-    if(busy)return; busy=true;
     const client=await pool.connect();
     try{
       await client.query('BEGIN');
