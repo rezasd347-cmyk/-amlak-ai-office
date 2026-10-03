@@ -67,3 +67,20 @@ test('AI runtime is provider agnostic and fail-closed',()=>{
  assert.ok(a.includes('AI_BASE_URL'));
  assert.ok(a.includes('AI_PROVIDER_NOT_CONFIGURED'));
 });
+
+test('owner R&D agent catalog is extensible',()=>{
+ const root=require('path').join(__dirname,'..');
+ const c=fs.readFileSync(require('path').join(root,'agent-catalog.js'),'utf8');
+ const r=fs.readFileSync(require('path').join(root,'agent-registry.js'),'utf8');
+ for(const x of ['Research Agent','Competitor Intelligence','Product Strategy Agent','UX Agent','Architecture Agent','Security Agent','Business Intelligence Agent']) assert.ok(c.includes(x));
+ assert.ok(r.includes('research'));
+ assert.ok(r.includes('competitor'));
+ assert.ok(r.includes('architecture'));
+});
+
+test('Owner Omni is admin-only and keeps sensitive approval gate',()=>{
+ const o=fs.readFileSync(require('path').join(__dirname,'..','omni-agent.js'),'utf8');
+ assert.ok(o.includes('ADMIN_REQUIRED'));
+ assert.ok(o.includes('owner_sensitive_action'));
+ assert.ok(o.includes("const status=p.approval_required?'blocked':'queued'"));
+});
