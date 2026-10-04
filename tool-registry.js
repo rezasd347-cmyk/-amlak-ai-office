@@ -13,7 +13,7 @@ const BUILTIN_TOOLS = [
   { id:'web', name:'Public Web', capability:'public_web', tier:'pro', risk:'medium' },
   { id:'mcp', name:'MCP Connectors', capability:'external_connectors', tier:'office', risk:'high' },
   { id:'code', name:'Code', capability:'code_analysis', tier:'office', risk:'high' },
-  { id:'qa', name:'QA', capability:'quality_assurance', tier:'office', risk:'high' },
+  { id:'qa', name:'QA', capability:'quality_assurance', tier:'pro', risk:'low' },
   { id:'billing', name:'Billing', capability:'billing', tier:'office', risk:'critical' }
 ];
 
