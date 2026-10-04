@@ -174,14 +174,19 @@ app.post('/api/offline/sync',auth,async(req,res)=>{
 
 app.post('/api/login',async(req,res)=>{
  const email=clean(req.body?.email),password=String(req.body?.password||'');if(!email)return res.status(400).json({error:'ایمیل را وارد کنید'});
- const adminEmail=clean(process.env.ADMIN_EMAIL);let u=store.staff.find(x=>String(x.email||'').toLowerCase()===email.toLowerCase());
- if(!u&&adminEmail&&email.toLowerCase()===adminEmail.toLowerCase()){u={id:next('staff'),name:'مدیر دفتر',email:adminEmail,password_hash:null,role:'admin',active:true,created_at:now()};store.staff.push(u);await persist()}
+ const adminEmail=clean(process.env.ADMIN_EMAIL),isEnvAdmin=!!adminEmail&&email.toLowerCase()===adminEmail.toLowerCase();let u=store.staff.find(x=>String(x.email||'').toLowerCase()===email.toLowerCase());
+ if(!u&&isEnvAdmin){u={id:next('staff'),name:'مدیر دفتر',email:adminEmail,password_hash:null,role:'admin',active:true,created_at:now()};store.staff.push(u);await persist()}
  if(!u)return res.status(401).json({error:'حساب کاربری پیدا نشد'});if(!u.active)return res.status(401).json({error:'حساب فعال نیست'});
  const envPass=process.env.ADMIN_PASSWORD?String(process.env.ADMIN_PASSWORD):null;
- if(!u.password_hash){if(u.role==='admin'&&envPass&&password===envPass){u.password_hash=bcrypt.hashSync(envPass,12);await persist()}else return res.status(401).json({error:'رمز عبور تنظیم نشده یا اشتباه است'})}
- else if(u.role==='admin'&&envPass&&password===envPass){
-   if(!bcrypt.compareSync(password,u.password_hash)){u.password_hash=bcrypt.hashSync(envPass,12);await persist()}
- }else if(!password||!bcrypt.compareSync(password,u.password_hash))return res.status(401).json({error:'رمز عبور اشتباه است'});
+ // The Render owner credentials are authoritative for the configured ADMIN_EMAIL.
+ if(isEnvAdmin&&envPass&&password===envPass){
+   let changed=false;
+   if(u.role!=='admin'){u.role='admin';changed=true}
+   if(!u.name){u.name='مدیر دفتر';changed=true}
+   if(!u.password_hash||!bcrypt.compareSync(password,u.password_hash)){u.password_hash=bcrypt.hashSync(envPass,12);changed=true}
+   if(changed)await persist();
+ }else if(!u.password_hash){return res.status(401).json({error:'رمز عبور تنظیم نشده یا اشتباه است'})}
+ else if(!password||!bcrypt.compareSync(password,u.password_hash))return res.status(401).json({error:'رمز عبور اشتباه است'});
  const sub=(await pool.query('SELECT tier,status,current_period_end,account_type FROM subscriptions WHERE user_id=$1',[u.id])).rows[0];
  const tier=u.role==='admin'?'enterprise':(sub?.status==='active'?sub.tier:'free');
  req.session.user={id:u.id,name:u.name,email:u.email,role:u.role,subscription_tier:tier,account_type:sub?.account_type||'consumer'};await audit(req,'login','session',u.id,'ورود به سیستم');res.json(req.session.user);
