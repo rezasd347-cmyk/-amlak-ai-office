@@ -297,39 +297,3 @@ app.use(express.static(path.join(__dirname,'public')));
 app.use('/media',express.static(LOCAL_MEDIA_DIR,{maxAge:'7d',immutable:true}));
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public/index.html')));
 (async()=>{try{await ensureTables();store=await load();await init();app.listen(PORT,'0.0.0.0',()=>{startMissionWorker(pool);startMaintenanceAgent(pool);console.log(`Amlak AI Office v${SCHEMA_VERSION} running on ${PORT}`)})}catch(e){console.error(e);process.exit(1)}})();
-+p.length}
-    const r=await pool.query('SELECT id,user_id,actor_type,action,resource_type,resource_id,request_id,risk,status,metadata,created_at FROM audit_logs '+where+' ORDER BY created_at DESC LIMIT '+limit,p);
-    res.json(r.rows);
-  }catch(e){next(e)}
-});
-app.get('/api/activities',admin,(req,res)=>{let a=store.activities.slice().sort((x,y)=>new Date(y.created_at)-new Date(x.created_at));if(req.query.user_id)a=a.filter(x=>x.user_id==req.query.user_id);res.json(a.slice(0,500))});
-app.get('/api/dashboard',auth,(req,res)=>{const ps=visibleForUser(store.properties,req),cs=visibleForUser(store.clients,req),fs=visibleForUser(store.followups,req),today=new Date().toISOString().slice(0,10);res.json({properties:ps.filter(x=>x.status==='active').length,clients:cs.length,openFollowups:fs.filter(x=>x.status==='open').length,todayFollowups:fs.filter(x=>x.status==='open'&&String(x.due_at||'').slice(0,10)===today).length,overdue:fs.filter(x=>x.status==='open'&&x.due_at&&new Date(x.due_at)<new Date()).length,newProperties:ps.filter(x=>new Date(x.created_at)>new Date(Date.now()-7*86400000)).length,newClients:cs.filter(x=>new Date(x.created_at)>new Date(Date.now()-7*86400000)).length,staff:store.staff.filter(x=>x.active).length,activities:store.activities.slice(-10).reverse()})});
-app.get('/api/backup',admin,(req,res)=>{res.setHeader('Content-Disposition',`attachment; filename="amlak-backup-${new Date().toISOString().slice(0,10)}.json"`);res.json(store)});
-app.post('/api/restore',admin,async(req,res)=>{const d=req.body;if(!d||!Array.isArray(d.staff)||!Array.isArray(d.properties)||!Array.isArray(d.clients)||!Array.isArray(d.followups))return res.status(400).json({error:'پشتیبان نامعتبر است'});await backup('pre-restore');store=migrate(d);await persist();res.json({ok:true,version:SCHEMA_VERSION})});
-app.get('/api/share',admin,(req,res)=>{const host=`${req.protocol}://${req.get('host')}`;res.json({url:host,login_url:`${host}/#login`,note:'دسترسی فقط با حساب فعال سیستم ممکن است.'})});
-
-app.get('/api/plans',(req,res)=>res.json([
-  {id:'free',name:'Free',rank:0,for:['consumer'],features:['جست‌وجوی پایه','مدیریت ملک','CRM پایه','رسانه پایه']},
-  {id:'plus',name:'Plus',rank:1,for:['consumer','agent'],features:['مشاور AI','هوش ملک','محتوا','تور مجازی','طراحی AI']},
-  {id:'pro',name:'Pro',rank:2,for:['agent','investor','developer'],features:['مرکز فرمان','Agentها','Lead Scout','ساخت','سرمایه‌گذاری','بازار','CRM هوشمند']},
-  {id:'office',name:'Office',rank:3,for:['office'],features:['چندکاربره','قرارداد','معاملات','امنیت','Developer/API']},
-  {id:'enterprise',name:'Enterprise',rank:4,for:['office','developer'],features:['حاکمیت AI','Self-Healing','داده جهانی','Digital Twin','اتصال سازمانی']}
-]));
-app.get('/api/account',auth,async(req,res)=>{const s=(await pool.query('SELECT tier,status,account_type,current_period_end FROM subscriptions WHERE user_id=$1',[req.session.user.id])).rows[0]||{tier:'free',status:'active',account_type:'consumer'};res.json({...s,role:req.session.user.role,services:SERVICES.filter(x=>hasTier(s.tier,x.tier))})});
-app.patch('/api/account',auth,async(req,res)=>{const types=['consumer','agent','office','developer','investor','owner','tenant'];const account_type=String(req.body?.account_type||'consumer');if(!types.includes(account_type))return res.status(400).json({error:'ACCOUNT_TYPE_INVALID'});await pool.query('INSERT INTO subscriptions(user_id,tier,account_type,status,updated_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(user_id) DO UPDATE SET account_type=EXCLUDED.account_type,updated_at=now()',[req.session.user.id,userTier(req.session.user),account_type,'active']);req.session.user.account_type=account_type;res.json({ok:true,account_type})});
-app.get('/api/services',auth,async(req,res)=>{const r=await pool.query('SELECT * FROM service_catalog WHERE enabled=true ORDER BY id');res.json(r.rows)});
-app.patch('/api/services/:id',admin,async(req,res)=>{const id=String(req.params.id),enabled=req.body?.enabled;if(typeof enabled!=='boolean')return res.status(400).json({error:'ENABLED_BOOLEAN_REQUIRED'});const r=await pool.query('UPDATE service_catalog SET enabled=$2,updated_at=now() WHERE id=$1 RETURNING *',[id,enabled]);if(!r.rows[0])return res.status(404).json({error:'SERVICE_NOT_FOUND'});res.json(r.rows[0])});
-app.delete('/api/services/:id',admin,async(req,res)=>{const r=await pool.query('UPDATE service_catalog SET enabled=false,updated_at=now() WHERE id=$1 RETURNING id',[String(req.params.id)]);if(!r.rows[0])return res.status(404).json({error:'SERVICE_NOT_FOUND'});res.json({ok:true,id:r.rows[0].id,disabled:true})});
-app.get('/api/subscription',auth,async(req,res)=>{const s=(await pool.query('SELECT tier,status,current_period_end FROM subscriptions WHERE user_id=$1',[req.session.user.id])).rows[0]||{tier:req.session.user.role==='admin'?'enterprise':'free',status:'active'};res.json({...s,tier:req.session.user.role==='admin'?'enterprise':s.tier})});
-app.patch('/api/subscription',admin,async(req,res)=>{const userId=Number(req.body?.user_id),tier=String(req.body?.tier||'free').toLowerCase();if(!Number.isInteger(userId)||!['free','plus','pro','office','enterprise'].includes(tier))return res.status(400).json({error:'SUBSCRIPTION_INVALID'});await pool.query('INSERT INTO subscriptions(user_id,tier,status,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(user_id) DO UPDATE SET tier=EXCLUDED.tier,status=EXCLUDED.status,updated_at=now()',[userId,tier,'active']);res.json({ok:true,user_id:userId,tier,status:'active'})});
-app.use('/api/agents',auth,createAgentRouter({pool,isAdmin:(req)=>req.session.user?.role==='admin'}));
-app.use('/api/omni',auth,createOmniRouter({pool}));
-app.get('/api/agent-registry',auth,requireTier('plus'),(req,res)=>res.json({agents:listAgents()}));
-app.use('/api/guide',auth,createGuideRouter());
-app.use('/api/media-studio',auth,createMediaRouter({pool}));
-app.use('/api/billing',createPaymentRouter({pool}));
-
-app.use(express.static(path.join(__dirname,'public')));
-app.use('/media',express.static(LOCAL_MEDIA_DIR,{maxAge:'7d',immutable:true}));
-app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public/index.html')));
-(async()=>{try{await ensureTables();store=await load();await init();app.listen(PORT,'0.0.0.0',()=>{startMissionWorker(pool);startMaintenanceAgent(pool);console.log(`Amlak AI Office v${SCHEMA_VERSION} running on ${PORT}`)})}catch(e){console.error(e);process.exit(1)}})();
