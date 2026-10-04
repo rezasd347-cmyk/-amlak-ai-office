@@ -1,6 +1,7 @@
 const express=require('express');
 const {AGENTS:CATALOG}=require('./agent-catalog');
-const {requireTier,newId}=require('./foundation');
+const {requireTier,newId,userTier}=require('./foundation');
+const {authorizeTool}=require('./tool-registry');
 
 const AGENTS=CATALOG;
 const {selectAgents}=require('./agent-registry');
@@ -36,7 +37,26 @@ function planTasks(task){
   return tasks.map(([task_key,agent_id,action],i)=>({id:newId(),task_key,agent_id,action,status:'queued',priority:100-i,input:base.input}));
 }
 async function emit(pool,missionId,taskId,type,payload={}){await pool.query('INSERT INTO mission_events(mission_id,task_id,type,payload) VALUES($1,$2,$3,$4)',[missionId,taskId,String(type).slice(0,80),JSON.stringify(payload)])}
+function actionTool(agent,action){
+  const map={
+    'search_property_sources':'lead-scout','discover_sources':'lead-scout','collect_listings':'lead-scout','deduplicate':'lead-scout',
+    'analyze_property':'property','match':'search','crm_task':'crm','create_content':'content','market_scan':'market',
+    'document_task':'documents','construction_plan':'construction','design_brief':'design','investment_analysis':'investment',
+    'delegate_specialists':'search','understand_request':'search','verify_result':'qa','validate_result':'qa','report':'search'
+  };
+  return map[action]||map[agent]||null;
+}
 async function executeTask(pool,t){
+  const mission=(await pool.query('SELECT user_id,plan FROM missions WHERE id=$1',[t.mission_id])).rows[0];
+  const userId=mission?.user_id;
+  const sub=userId?(await pool.query('SELECT tier FROM subscriptions WHERE user_id=$1',[userId])).rows[0]:null;
+  const tier=String(sub?.tier||'free').toLowerCase();
+  const toolId=actionTool(t.agent_id,t.action);
+  if(toolId){
+    const auth=await authorizeTool(pool,toolId,{tier,agentId:t.agent_id});
+    if(!auth.allowed)return {status:'blocked',reason:auth.reason,required_tier:auth.required_tier||null,tool:toolId};
+    if(auth.policy?.approval_required)return {status:'blocked',reason:'TOOL_APPROVAL_REQUIRED',tool:toolId,risk:auth.policy.risk};
+  }
   if(t.agent_id==='lead-scout'&&t.action==='collect_listings') return {status:'blocked',reason:'SOURCE_ADAPTER_REQUIRED',sources:t.input.sources,policy:'public_or_authorized_only'};
   if(t.agent_id==='qa'&&t.action==='validate_result') return {status:'passed',checks:['schema','mission_state','provenance_required']};
   if(t.agent_id==='orchestrator'&&t.action==='report') return {status:'planned',message:'گزارش نهایی پس از تکمیل وظایف تولید می‌شود.'};
@@ -53,15 +73,19 @@ function createRouter(opts){
   router.get('/missions/:id',async(req,res)=>{const m=(await pool.query('SELECT * FROM missions WHERE id=$1',[req.params.id])).rows[0];if(!m)return res.status(404).json({error:'MISSION_NOT_FOUND'});if(!isAdmin(req)&&Number(m.user_id)!==Number(req.session.user.id))return res.status(403).json({error:'FORBIDDEN'});const [t,e]=await Promise.all([pool.query('SELECT * FROM mission_tasks WHERE mission_id=$1 ORDER BY priority DESC,created_at',[m.id]),pool.query('SELECT * FROM mission_events WHERE mission_id=$1 ORDER BY created_at DESC LIMIT 200',[m.id])]);res.json({...m,tasks:t.rows,events:e.rows})});
   router.post('/command',requireTier('pro'),async(req,res)=>{
     const command=String(req.body?.command||'').trim();if(!command)return res.status(400).json({error:'COMMAND_REQUIRED'});
-    const task=parseCommand(command),id=newId(),selected=selectAgents(command),planned=planTasks(task);
+    const task=parseCommand(command),selected=selectAgents(command),planned=planTasks(task),idempotencyKey=String(req.body?.idempotency_key||'').trim();
+    if(idempotencyKey){const prev=await pool.query('SELECT response FROM idempotency_keys WHERE key=$1 AND user_id=$2 AND operation=$3 AND (expires_at IS NULL OR expires_at>now())',[idempotencyKey,req.session.user.id,'mission.command']);if(prev.rows[0])return res.status(200).json(prev.rows[0].response);}
+    const id=newId();
     if(selected.length){task.selected_agents=selected.map(a=>a.id);planned.unshift({id:newId(),task_key:'specialist-selection',agent_id:'orchestrator',action:'delegate_specialists',status:'queued',priority:110,input:{agents:task.selected_agents}});}
     const client=await pool.connect();
     try{await client.query('BEGIN');await client.query('INSERT INTO missions(id,user_id,command,status,plan) VALUES($1,$2,$3,$4,$5)',[id,req.session.user.id,command,'queued',JSON.stringify(task)]);
       for(const t of planned)await client.query('INSERT INTO mission_tasks(id,mission_id,task_key,agent_id,action,status,priority,input) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[t.id,id,t.task_key,t.agent_id,t.action,'queued',t.priority,JSON.stringify(t.input)]);
       await client.query('COMMIT');
     }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+    const response={mission_id:id,status:'queued',agent:task.agent,action:task.action,plan:planned};
+    if(idempotencyKey)await pool.query('INSERT INTO idempotency_keys(key,user_id,operation,response,expires_at) VALUES($1,$2,$3,$4,now()+interval \'24 hours\') ON CONFLICT(key) DO NOTHING',[idempotencyKey,req.session.user.id,'mission.command',JSON.stringify(response)]);
     emit(pool,id,null,'mission.created',{agent:task.agent,action:task.action});
-    res.status(202).json({mission_id:id,status:'queued',agent:task.agent,action:task.action,plan:planned});
+    res.status(202).json(response);
   });
   router.post('/missions/:id/cancel',async(req,res)=>{const m=(await pool.query('SELECT * FROM missions WHERE id=$1',[req.params.id])).rows[0];if(!m)return res.status(404).json({error:'MISSION_NOT_FOUND'});if(!isAdmin(req)&&Number(m.user_id)!==Number(req.session.user.id))return res.status(403).json({error:'FORBIDDEN'});await pool.query("UPDATE missions SET status='cancelled',finished_at=now(),updated_at=now() WHERE id=$1 AND status NOT IN ('finished','failed','cancelled')",[m.id]);await pool.query("UPDATE mission_tasks SET status='cancelled',updated_at=now() WHERE mission_id=$1 AND status IN ('queued','running')",[m.id]);await emit(pool,m.id,null,'mission.cancelled');res.json({ok:true,status:'cancelled'})});
   router.get('/jobs/:id',async(req,res)=>{const r=await pool.query('SELECT * FROM agent_jobs WHERE id=$1',[req.params.id]),j=r.rows[0];if(!j)return res.status(404).json({error:'AGENT_JOB_NOT_FOUND'});if(!isAdmin(req)&&Number(j.user_id)!==Number(req.session.user.id))return res.status(403).json({error:'FORBIDDEN'});res.json(j)});
@@ -113,7 +137,8 @@ async function runMission(pool,id){
   const left=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status IN ('queued','running')",[id])).rows[0].n;
   const failed=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status='failed'",[id])).rows[0].n;
   const blocked=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status='blocked'",[id])).rows[0].n;
-  const status=left? 'running': failed?'failed': blocked?'blocked':'finished';
+  const queued=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status='queued'",[id])).rows[0].n;
+  const status=queued?'queued':left?'running': failed?'failed': blocked?'blocked':'finished';
   await pool.query('UPDATE missions SET status=$2,result=$3,finished_at=CASE WHEN $2 IN (\'finished\',\'failed\',\'blocked\') THEN now() ELSE finished_at END,updated_at=now() WHERE id=$1',[id,status,JSON.stringify({failed,blocked})]);
   await emit(pool,id,null,'mission.completed',{status,failed,blocked});
 }
