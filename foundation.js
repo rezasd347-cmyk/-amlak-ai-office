@@ -174,7 +174,7 @@ async function ensureFoundation(pool){
     ['mission_engine',true],['pro_command_center',true],['lead_scout',false],['ai_self_healing',false]
   ]) await pool.query('INSERT INTO feature_flags(key,enabled) VALUES($1,$2) ON CONFLICT(key) DO NOTHING',x);
   for(const x of [
-    ['billing',true,'critical'],['mcp',true,'high'],['code',true,'high'],['qa',false,'high'],['documents',false,'high']
+    ['billing',true,'critical'],['mcp',true,'high'],['code',true,'high'],['qa',true,'low'],['documents',false,'high']
   ]) await pool.query('INSERT INTO tool_policies(tool_id,enabled,approval_required,risk) VALUES($1,$2,$3,$4) ON CONFLICT(tool_id) DO NOTHING',[x[0],x[1],x[2]==='critical'||x[2]==='high',x[2]]);
     for(const x of SERVICES) await pool.query('INSERT INTO service_catalog(id,name,required_tier) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,required_tier=EXCLUDED.required_tier,updated_at=now()',[x.id,x.title,x.tier]);
 
