@@ -35,4 +35,21 @@ function selectTools(command,{tier='free',agentId=null}={}){
 const TIER_RANK={free:0,plus:1,pro:2,office:3,enterprise:4};
 const tierRank=t=>TIER_RANK[String(t||'free').toLowerCase()]??0;
 const TOOL_AGENT_DENY={};
-module.exports={BUILTIN_TOOLS,listTools,getTool,selectTools,tierRank};
+
+async function authorizeTool(pool,toolId,{tier='free',agentId=null}={}){
+  const tool=getTool(toolId);
+  if(!tool)return {allowed:false,reason:'TOOL_NOT_FOUND'};
+  if(tierRank(tier)<tierRank(tool.tier))return {allowed:false,reason:'TIER_REQUIRED',required_tier:tool.tier};
+  if(agentId&&TOOL_AGENT_DENY[agentId]?.includes(tool.id))return {allowed:false,reason:'AGENT_TOOL_DENIED'};
+  if(!pool)return {allowed:true,tool};
+  const r=await pool.query('SELECT enabled,required_tier,risk,approval_required,allowed_agents,config FROM tool_policies WHERE tool_id=$1',[tool.id]);
+  if(!r.rows[0])return {allowed:true,tool};
+  const p=r.rows[0];
+  if(!p.enabled)return {allowed:false,reason:'TOOL_DISABLED'};
+  if(tierRank(tier)<tierRank(p.required_tier))return {allowed:false,reason:'POLICY_TIER_REQUIRED',required_tier:p.required_tier};
+  const allowed=Array.isArray(p.allowed_agents)?p.allowed_agents:(Array.isArray(p.allowed_agents?.value)?p.allowed_agents.value:[]);
+  if(allowed.length&&agentId&&!allowed.includes(agentId))return {allowed:false,reason:'AGENT_NOT_ALLOWED'};
+  return {allowed:true,tool,policy:{risk:p.risk,approval_required:p.approval_required,config:p.config||{}}};
+}
+
+module.exports={BUILTIN_TOOLS,listTools,getTool,selectTools,tierRank,authorizeTool};
