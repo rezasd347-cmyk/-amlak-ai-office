@@ -118,6 +118,7 @@ async function ensureFoundation(pool){
     risk TEXT NOT NULL DEFAULT 'low',
     approval_required BOOLEAN NOT NULL DEFAULT false,
     allowed_agents JSONB NOT NULL DEFAULT '[]'::jsonb,
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   `);
     await pool.query(`CREATE TABLE IF NOT EXISTS approvals(
