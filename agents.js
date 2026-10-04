@@ -72,7 +72,7 @@ async function executeTask(pool,t){
 
   // Local-first executors make the initial version useful without external providers.
   if(t.action==='create_content'){
-    const subject=text.replace(/^(?:برای|لطفاً|لطفا)s*/,'').trim();
+    const subject=text.replace(/^(?:برای|لطفاً|لطفا)\s*/,'').trim();
     return {status:'finished',type:'listing_copy',headline:'فرصت ویژه ملکی',body:`اگر به دنبال یک گزینه مناسب در حوزه املاک هستید، این فرصت را بررسی کنید. مشخصات، قیمت و جزئیات را قبل از انتشار نهایی تکمیل و تأیید کنید.\n\nدرخواست: ${subject}`,channels:['website','instagram','telegram'],requires_review:true};
   }
   if(t.action==='analyze_property'){
@@ -183,7 +183,7 @@ async function runMission(pool,id){
   const failed=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status='failed'",[id])).rows[0].n;
   const blocked=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status='blocked'",[id])).rows[0].n;
   const queued=(await pool.query("SELECT count(*)::int n FROM mission_tasks WHERE mission_id=$1 AND status='queued'",[id])).rows[0].n;
-  const status=queued?'queued':left?'running': failed?'failed': blocked?'blocked':'finished';
+  const status=blocked?'blocked':failed?'failed':queued?'queued':left?'running':'finished';
   await pool.query('UPDATE missions SET status=$2,result=$3,finished_at=CASE WHEN $2 IN (\'finished\',\'failed\',\'blocked\') THEN now() ELSE finished_at END,updated_at=now() WHERE id=$1',[id,status,JSON.stringify({failed,blocked})]);
   await emit(pool,id,null,'mission.completed',{status,failed,blocked});
 }
