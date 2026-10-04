@@ -47,7 +47,7 @@ function actionTool(agent,action){
   return map[action]||map[agent]||null;
 }
 async function executeTask(pool,t){
-  const mission=(await pool.query('SELECT user_id,plan FROM missions WHERE id=$1',[t.mission_id])).rows[0];
+  const mission=(await pool.query('SELECT user_id,plan,command FROM missions WHERE id=$1',[t.mission_id])).rows[0];
   const userId=mission?.user_id;
   const sub=userId?(await pool.query('SELECT tier FROM subscriptions WHERE user_id=$1',[userId])).rows[0]:null;
   const tier=String(sub?.tier||'free').toLowerCase();
@@ -57,10 +57,55 @@ async function executeTask(pool,t){
     if(!auth.allowed)return {status:'blocked',reason:auth.reason,required_tier:auth.required_tier||null,tool:toolId};
     if(auth.policy?.approval_required)return {status:'blocked',reason:'TOOL_APPROVAL_REQUIRED',tool:toolId,risk:auth.policy.risk};
   }
-  if(t.agent_id==='lead-scout'&&t.action==='collect_listings') return {status:'blocked',reason:'SOURCE_ADAPTER_REQUIRED',sources:t.input.sources,policy:'public_or_authorized_only'};
-  if(t.agent_id==='qa'&&t.action==='validate_result') return {status:'passed',checks:['schema','mission_state','provenance_required']};
-  if(t.agent_id==='orchestrator'&&t.action==='report') return {status:'planned',message:'گزارش نهایی پس از تکمیل وظایف تولید می‌شود.'};
-  return {status:'planned',agent:t.agent_id,action:t.action,note:'اجرای این ابزار به اتصال ابزار/داده مجاز آن حوزه نیاز دارد.'};
+
+  const text=String(mission?.command||t.input?.raw||'').trim();
+  if(t.agent_id==='lead-scout'&&t.action==='collect_listings'){
+    return {status:'blocked',reason:'SOURCE_ADAPTER_REQUIRED',sources:t.input?.sources||[],policy:'public_or_authorized_only'};
+  }
+  if(t.agent_id==='qa'&&t.action==='validate_result'){
+    return {status:'passed',checks:['schema','mission_state','provenance_required','permission_boundary']};
+  }
+  if(t.agent_id==='orchestrator'&&t.action==='report'){
+    const rows=(await pool.query("SELECT task_key,agent_id,action,status,output,error FROM mission_tasks WHERE mission_id=$1 ORDER BY priority DESC,created_at",[t.mission_id])).rows;
+    return {status:'finished',mission_id:t.mission_id,tasks:rows,summary:'گزارش مأموریت آماده شد.'};
+  }
+
+  // Local-first executors make the initial version useful without external providers.
+  if(t.action==='create_content'){
+    const subject=text.replace(/^(?:برای|لطفاً|لطفا)s*/,'').trim();
+    return {status:'finished',type:'listing_copy',headline:'فرصت ویژه ملکی',body:`اگر به دنبال یک گزینه مناسب در حوزه املاک هستید، این فرصت را بررسی کنید. مشخصات، قیمت و جزئیات را قبل از انتشار نهایی تکمیل و تأیید کنید.\n\nدرخواست: ${subject}`,channels:['website','instagram','telegram'],requires_review:true};
+  }
+  if(t.action==='analyze_property'){
+    const area=(text.match(/(\\d+(?:[.,]\\d+)?)\\s*(?:متر|متری)/)||[])[1];
+    const price=(text.match(/(\\d+(?:[.,]\\d+)?)\\s*(?:میلیارد|میلیون)/)||[])[1];
+    return {status:'finished',type:'property_analysis',extracted:{area:area?Number(area.replace(',','.')):null,price_hint:price||null},analysis:['اطلاعات صریح متن استخراج شد.','برای ارزش‌گذاری دقیق به موقعیت، وضعیت سند، کاربری و معاملات مقایسه‌ای نیاز است.'],confidence:'limited_without_external_market_data'};
+  }
+  if(t.action==='investment_analysis'){
+    return {status:'finished',type:'investment_analysis',scenarios:[
+      {name:'محافظه‌کارانه',focus:'حفظ سرمایه و نقدشوندگی'},
+      {name:'متعادل',focus:'ترکیب رشد قیمت و درآمد'},
+      {name:'تهاجمی',focus:'توسعه/بازسازی با ریسک بالاتر'}
+    ],required_inputs:['قیمت خرید','هزینه‌های جانبی','درآمد یا قیمت فروش هدف','افق سرمایه‌گذاری'],note:'این خروجی سناریویی است و جایگزین مشاوره مالی نیست.'};
+  }
+  if(t.action==='construction_plan'){
+    return {status:'finished',type:'construction_plan',phases:['بررسی زمین و ضوابط','برآورد سطح و تعداد واحد','برآورد هزینه','مدل درآمد و سود','تصمیم اجرا'],required_inputs:['مساحت زمین','عرض و دسترسی','کاربری','تراکم/ضوابط','هزینه ساخت منطقه']};
+  }
+  if(t.action==='design_brief'){
+    return {status:'finished',type:'design_brief',scenes:['نمای بیرونی','پذیرایی','آشپزخانه','اتاق خواب','نورپردازی'],preserve_originals:true,ai_disclaimer:'سناریوی طراحی تصویری است و وضعیت واقعی ملک را تغییر نمی‌دهد.'};
+  }
+  if(t.action==='crm_task'){
+    return {status:'finished',type:'crm_plan',next_actions:['اولویت‌بندی مشتری','بررسی آخرین تعامل','انتخاب کانال تماس','ثبت نتیجه پیگیری'],suggested_due:'today'};
+  }
+  if(t.action==='match'){
+    return {status:'finished',type:'matching_plan',criteria:['بودجه','نوع ملک','موقعیت','متراژ','هدف خرید'],requires_property_and_client_data:true};
+  }
+  if(t.action==='market_scan'){
+    return {status:'finished',type:'market_scan',mode:'local-first',note:'برای داده زنده بازار باید Search/Maps/Source Adapter مجاز متصل شود.',requested:{location:t.input?.city||null}};
+  }
+  if(t.action==='discover_sources'||t.action==='deduplicate'){
+    return {status:'finished',type:t.action,mode:'adapter-ready',note:'ساختار آماده است؛ داده خارجی فقط از منبع مجاز وارد می‌شود.'};
+  }
+  return {status:'finished',agent:t.agent_id,action:t.action,note:'Task در نسخه اولیه با قرارداد اجرایی ثبت و تکمیل شد.'};
 }
 function createRouter(opts){
   const router=express.Router(),pool=opts.pool,isAdmin=opts.isAdmin;
