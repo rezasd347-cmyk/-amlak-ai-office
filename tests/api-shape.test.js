@@ -113,7 +113,7 @@ test('mission governance and idempotency boundaries are wired',()=>{
  const f=read('foundation.js');
  assert.ok(a.includes('authorizeTool'));
  assert.ok(a.includes('idempotency_key'));
- assert.ok(a.includes("const status=queued?'queued'"));
+ assert.ok(a.includes("const status=blocked?'blocked':failed?'failed':queued?'queued'"));
  assert.ok(t.includes('authorizeTool'));
  assert.ok(f.includes('idx_idempotency_user_operation'));
 });
