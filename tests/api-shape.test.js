@@ -2,6 +2,8 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('fs');
 const pkg=require('../package.json');
+const root=require('path').join(__dirname,'..');
+const read=name=>fs.readFileSync(require('path').join(root,name),'utf8');
 
 test('package has production start and required dependencies',()=>{
   assert.equal(pkg.scripts.start,'node server.js');
