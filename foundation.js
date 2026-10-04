@@ -120,8 +120,8 @@ async function ensureFoundation(pool){
     allowed_agents JSONB NOT NULL DEFAULT '[]'::jsonb,
     config JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  `);
-    await pool.query(`CREATE TABLE IF NOT EXISTS approvals(
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS approvals(
     id UUID PRIMARY KEY,user_id BIGINT NOT NULL,mission_id UUID REFERENCES missions(id) ON DELETE CASCADE,
     task_id UUID REFERENCES mission_tasks(id) ON DELETE CASCADE,kind TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,decision JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
