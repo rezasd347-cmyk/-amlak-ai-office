@@ -155,6 +155,12 @@ async function ensureFoundation(pool){
   await pool.query('CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status,created_at)');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_runs_mission ON ai_runs(mission_id,created_at DESC)');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status,available_at)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_idempotency_user_operation ON idempotency_keys(user_id,operation,created_at DESC)');
+  for(const x of [
+    ['orchestrator','free'],['lead-scout','pro'],['property-intel','pro'],['matching','pro'],['crm','pro'],['content','pro'],
+    ['market','pro'],['document','pro'],['construction','pro'],['design','pro'],['investment','pro'],['qa','office'],
+    ['research','office'],['competitor','office'],['product','office'],['ux','office'],['architecture','office'],['security','office'],['business','office']
+  ]) await pool.query('INSERT INTO agent_policies(agent_id,required_tier) VALUES($1,$2) ON CONFLICT(agent_id) DO UPDATE SET required_tier=EXCLUDED.required_tier,updated_at=now()',[x[0],x[1]]);
   for(const x of [
     ['public-web','Public web adapter','source','pro'],
     ['divar','Divar connector placeholder','source','pro'],
