@@ -179,7 +179,9 @@ app.post('/api/login',async(req,res)=>{
  if(!u)return res.status(401).json({error:'حساب کاربری پیدا نشد'});if(!u.active)return res.status(401).json({error:'حساب فعال نیست'});
  const envPass=process.env.ADMIN_PASSWORD?String(process.env.ADMIN_PASSWORD):null;
  if(!u.password_hash){if(u.role==='admin'&&envPass&&password===envPass){u.password_hash=bcrypt.hashSync(envPass,12);await persist()}else return res.status(401).json({error:'رمز عبور تنظیم نشده یا اشتباه است'})}
- else if(!password||!bcrypt.compareSync(password,u.password_hash))return res.status(401).json({error:'رمز عبور اشتباه است'});
+ else if(u.role==='admin'&&envPass&&password===envPass){
+   if(!bcrypt.compareSync(password,u.password_hash)){u.password_hash=bcrypt.hashSync(envPass,12);await persist()}
+ }else if(!password||!bcrypt.compareSync(password,u.password_hash))return res.status(401).json({error:'رمز عبور اشتباه است'});
  const sub=(await pool.query('SELECT tier,status,current_period_end,account_type FROM subscriptions WHERE user_id=$1',[u.id])).rows[0];
  const tier=u.role==='admin'?'enterprise':(sub?.status==='active'?sub.tier:'free');
  req.session.user={id:u.id,name:u.name,email:u.email,role:u.role,subscription_tier:tier,account_type:sub?.account_type||'consumer'};await audit(req,'login','session',u.id,'ورود به سیستم');res.json(req.session.user);
