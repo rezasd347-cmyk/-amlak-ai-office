@@ -121,6 +121,15 @@ test('mission retry requeues the mission for another worker pass',()=>{
  assert.ok(a.includes("if(nextStatus==='queued')"));
 });
 
+test('initial mission executors are locally useful',()=>{
+ const a=read('agents.js');
+ for(const x of ['create_content','analyze_property','investment_analysis','construction_plan','design_brief','crm_task','match','market_scan']) assert.ok(a.includes("t.action==='"+x+"'"));
+});
+test('command center has mission execution UI',()=>{
+ const s=read('public/office-center.js');
+ assert.ok(s.includes('/api/agents/command'));
+ assert.ok(s.includes('مأموریت ثبت شد'));
+});
 test('mission worker has stale recovery and retry boundaries',()=>{
  const a=read('agents.js');
  assert.ok(a.includes('recoverStaleWork'));
