@@ -48,7 +48,7 @@ input,select,textarea{background:rgba(255,255,255,.72);border:1px solid var(--li
 </style>
 </head>
 <body>
-<div id="login" class="login"><div class="card"><img src="/logo.svg" alt="AMLAK AI OFFICE" style="width:min(310px,90%);display:block;margin:0 auto 24px"><div class="field"><label>ایمیل مدیر / کاربر</label><input id="email" type="email"></div><div class="field"><label>رمز عبور</label><input id="password" type="password"></div><button class="btn" style="width:100%" onclick="login()">ورود</button><p id="loginMsg" class="muted"></p></div></div>
+<div id="login" class="login"><div class="card"><img src="/logo.svg" alt="AMLAK AI OFFICE" style="width:min(310px,90%);display:block;margin:0 auto 24px"><div class="field"><label>ایمیل مدیر / کاربر</label><input id="email" type="email"></div><div class="field"><label>رمز عبور</label><input id="password" type="password"></div><button id="loginBtn" class="btn" type="button" style="width:100%">ورود</button><p id="loginMsg" class="muted"></p></div></div>
 <div id="app" class="hidden">
 <header><div class="brand"><img src="/logo.svg" alt="AMLAK AI OFFICE" style="height:42px;width:auto;display:block"></div><nav id="nav"></nav><button class="ghost" onclick="logout()">خروج</button></header>
 <main id="view"></main>
@@ -228,5 +228,5 @@ async function runMediaStudio(pid){
   }catch(e){toast(e.message)}
 }
 </script>
-<script src="/office-center.js"></script>
+<script src="/login.js?v=2"></script><script src="/office-center.js"></script>
 <script src="/offline.js"></script></body></html>
