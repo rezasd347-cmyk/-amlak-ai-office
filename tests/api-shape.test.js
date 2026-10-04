@@ -105,6 +105,16 @@ test('audit foundation and admin audit endpoint are wired',()=>{
  assert.ok(s.includes("risk:'critical'"));
 });
 
+test('mission governance and idempotency boundaries are wired',()=>{
+ const a=read('agents.js');
+ const t=read('tool-registry.js');
+ const f=read('foundation.js');
+ assert.ok(a.includes('authorizeTool'));
+ assert.ok(a.includes('idempotency_key'));
+ assert.ok(a.includes("const status=queued?'queued'"));
+ assert.ok(t.includes('authorizeTool'));
+ assert.ok(f.includes('idx_idempotency_user_operation'));
+});
 test('mission retry requeues the mission for another worker pass',()=>{
  const a=read('agents.js');
  assert.ok(a.includes("UPDATE missions SET status='queued'"));
