@@ -110,7 +110,7 @@ async function ensureFoundation(pool){
     auto_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
     approval_risk TEXT NOT NULL DEFAULT 'high',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  `);
+  )`);
   await pool.query(`CREATE TABLE IF NOT EXISTS tool_policies(
     tool_id TEXT PRIMARY KEY,
     enabled BOOLEAN NOT NULL DEFAULT true,
