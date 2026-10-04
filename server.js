@@ -260,8 +260,13 @@ app.get('/api/reports/staff/:id/html',admin,(req,res)=>{const r=reportFor(req.pa
 app.get('/api/audit',admin,async(req,res,next)=>{
   try{
     const limit=Math.min(Math.max(Number(req.query.limit)||100,1),500);
-    const p=[];let where='';
-    if(req.query.risk){p.push(String(req.query.risk));where='WHERE risk=let a=store.activities.slice().sort((x,y)=>new Date(y.created_at)-new Date(x.created_at));if(req.query.user_id)a=a.filter(x=>x.user_id==req.query.user_id);res.json(a.slice(0,500))});
+    const p=[];const where=[];
+    if(req.query.risk){p.push(String(req.query.risk));where.push('risk=$'+p.length)}
+    if(req.query.user_id){p.push(Number(req.query.user_id));where.push('user_id=$'+p.length)}
+    const q=await pool.query('SELECT id,user_id,actor_type,action,resource_type,resource_id,request_id,risk,status,metadata,created_at FROM audit_logs '+(where.length?'WHERE '+where.join(' AND '):'')+' ORDER BY created_at DESC LIMIT '+limit,p);
+    res.json(q.rows);
+  }catch(e){next(e)}
+});
 app.get('/api/dashboard',auth,(req,res)=>{const ps=visibleForUser(store.properties,req),cs=visibleForUser(store.clients,req),fs=visibleForUser(store.followups,req),today=new Date().toISOString().slice(0,10);res.json({properties:ps.filter(x=>x.status==='active').length,clients:cs.length,openFollowups:fs.filter(x=>x.status==='open').length,todayFollowups:fs.filter(x=>x.status==='open'&&String(x.due_at||'').slice(0,10)===today).length,overdue:fs.filter(x=>x.status==='open'&&x.due_at&&new Date(x.due_at)<new Date()).length,newProperties:ps.filter(x=>new Date(x.created_at)>new Date(Date.now()-7*86400000)).length,newClients:cs.filter(x=>new Date(x.created_at)>new Date(Date.now()-7*86400000)).length,staff:store.staff.filter(x=>x.active).length,activities:store.activities.slice(-10).reverse()})});
 app.get('/api/backup',admin,(req,res)=>{res.setHeader('Content-Disposition',`attachment; filename="amlak-backup-${new Date().toISOString().slice(0,10)}.json"`);res.json(store)});
 app.post('/api/restore',admin,async(req,res)=>{const d=req.body;if(!d||!Array.isArray(d.staff)||!Array.isArray(d.properties)||!Array.isArray(d.clients)||!Array.isArray(d.followups))return res.status(400).json({error:'پشتیبان نامعتبر است'});await backup('pre-restore');store=migrate(d);await persist();await audit(req,{action:'restore',resource_type:'app_state',risk:'critical',metadata:{version:SCHEMA_VERSION}});res.json({ok:true,version:SCHEMA_VERSION})});
