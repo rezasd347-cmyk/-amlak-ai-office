@@ -130,6 +130,12 @@ test('command center has mission execution UI',()=>{
  assert.ok(s.includes('/api/agents/command'));
  assert.ok(s.includes('مأموریت ثبت شد'));
 });
+test('tool policy schema and agent authorization are complete',()=>{
+ const f=read('foundation.js'),t=read('tool-registry.js');
+ assert.ok(f.includes('config JSONB NOT NULL'));
+ assert.ok(t.includes('FROM agent_policies'));
+ assert.ok(t.includes('AGENT_TOOL_NOT_ALLOWED'));
+});
 test('mission worker has stale recovery and retry boundaries',()=>{
  const a=read('agents.js');
  assert.ok(a.includes('recoverStaleWork'));
