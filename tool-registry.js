@@ -43,6 +43,15 @@ async function authorizeTool(pool,toolId,{tier='free',agentId=null}={}){
   if(agentId&&TOOL_AGENT_DENY[agentId]?.includes(tool.id))return {allowed:false,reason:'AGENT_TOOL_DENIED'};
   if(!pool)return {allowed:true,tool};
   const r=await pool.query('SELECT enabled,required_tier,risk,approval_required,allowed_agents,config FROM tool_policies WHERE tool_id=$1',[tool.id]);
+  const ap=agentId ? (await pool.query('SELECT enabled,required_tier,allowed_tools,blocked_tools FROM agent_policies WHERE agent_id=$1',[agentId])).rows[0] : null;
+  if(ap){
+    if(!ap.enabled)return {allowed:false,reason:'AGENT_DISABLED'};
+    if(tierRank(tier)<tierRank(ap.required_tier))return {allowed:false,reason:'AGENT_TIER_REQUIRED',required_tier:ap.required_tier};
+    const allow=Array.isArray(ap.allowed_tools)?ap.allowed_tools:(Array.isArray(ap.allowed_tools?.value)?ap.allowed_tools.value:[]);
+    const deny=Array.isArray(ap.blocked_tools)?ap.blocked_tools:(Array.isArray(ap.blocked_tools?.value)?ap.blocked_tools.value:[]);
+    if(allow.length&&!allow.includes(tool.id))return {allowed:false,reason:'AGENT_TOOL_NOT_ALLOWED'};
+    if(deny.includes(tool.id))return {allowed:false,reason:'AGENT_TOOL_BLOCKED'};
+  }
   if(!r.rows[0])return {allowed:true,tool};
   const p=r.rows[0];
   if(!p.enabled)return {allowed:false,reason:'TOOL_DISABLED'};
