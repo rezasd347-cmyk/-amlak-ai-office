@@ -1,41 +1,41 @@
 (function(){
-  function show(message){
-    var el=document.getElementById('loginMsg');
-    if(el) el.textContent=message;
+  function show(message){var el=document.getElementById('loginMsg');if(el)el.textContent=message;}
+  function email(){return (document.getElementById('email')?.value||'').trim();}
+  function busy(id,on,label){var b=document.getElementById(id);if(!b)return;b.disabled=on;if(on)b.dataset.label=b.textContent; b.textContent=on?label:(b.dataset.label||b.textContent);}
+  async function post(path,body){
+    var response=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var data={};try{data=await response.json();}catch(_){}
+    if(!response.ok)throw new Error(data.error||('خطا (HTTP '+response.status+')'));
+    return data;
   }
-  async function doLogin(){
-    var email=document.getElementById('email');
-    var password=document.getElementById('password');
-    var button=document.getElementById('loginBtn');
-    var e=(email&&email.value||'').trim();
-    var p=(password&&password.value)||'';
-    if(!e||!p){show('ایمیل و رمز عبور را وارد کنید');return;}
-    if(button){button.disabled=true;button.textContent='در حال ورود…';}
-    show('');
-    try{
-      var response=await fetch('/api/login',{
-        method:'POST',
-        credentials:'same-origin',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({email:e,password:p})
-      });
-      var data={};
-      try{data=await response.json();}catch(_){}
-      if(!response.ok) throw new Error(data.error||('خطا (HTTP '+response.status+')'));
-      var typesResponse=await fetch('/api/property-types',{credentials:'same-origin'});
-      if(!typesResponse.ok) throw new Error('ورود انجام شد، اما اطلاعات اولیه صفحه دریافت نشد.');
-      window.location.reload();
-    }catch(err){
-      show(err&&err.message?err.message:'ورود انجام نشد');
-    }finally{
-      if(button){button.disabled=false;button.textContent='ورود';}
-    }
+  async function doAdminLogin(){
+    var e=email(),p=document.getElementById('password')?.value||'';
+    if(!e||!p){show('ایمیل مدیر و رمز اختصاصی را وارد کنید');return;}
+    busy('loginBtn',true,'در حال ورود…');show('');
+    try{await post('/api/login',{email:e,password:p});window.location.reload();}
+    catch(err){show(err.message||'ورود انجام نشد');}
+    finally{busy('loginBtn',false,'ورود مدیر با رمز');}
   }
-  window.login=doLogin;
+  async function requestCode(){
+    var e=email();if(!e){show('ابتدا ایمیل حساب کاربری را وارد کنید');return;}
+    busy('requestCodeBtn',true,'در حال ارسال…');show('');
+    try{var d=await post('/api/auth/request-code',{email:e});document.getElementById('codeArea')?.classList.remove('hidden');show(d.message||'اگر حساب فعال باشد، کد ارسال می‌شود.');}
+    catch(err){show(err.message||'ارسال کد ناموفق بود');}
+    finally{busy('requestCodeBtn',false,'ارسال کد ورود به ایمیل');}
+  }
+  async function verifyCode(){
+    var e=email(),code=(document.getElementById('emailCode')?.value||'').trim();
+    if(!e||!/^\d{6}$/.test(code)){show('ایمیل و کد شش‌رقمی را وارد کنید');return;}
+    busy('verifyCodeBtn',true,'در حال تأیید…');show('');
+    try{await post('/api/auth/verify-code',{email:e,code});window.location.reload();}
+    catch(err){show(err.message||'تأیید کد ناموفق بود');}
+    finally{busy('verifyCodeBtn',false,'تأیید کد و ورود');}
+  }
   document.addEventListener('DOMContentLoaded',function(){
-    var b=document.getElementById('loginBtn');
-    if(b) b.addEventListener('click',doLogin);
-    var p=document.getElementById('password');
-    if(p) p.addEventListener('keydown',function(ev){if(ev.key==='Enter')doLogin();});
+    document.getElementById('loginBtn')?.addEventListener('click',doAdminLogin);
+    document.getElementById('requestCodeBtn')?.addEventListener('click',requestCode);
+    document.getElementById('verifyCodeBtn')?.addEventListener('click',verifyCode);
+    document.getElementById('password')?.addEventListener('keydown',function(e){if(e.key==='Enter')doAdminLogin();});
+    document.getElementById('emailCode')?.addEventListener('keydown',function(e){if(e.key==='Enter')verifyCode();});
   });
 })();
