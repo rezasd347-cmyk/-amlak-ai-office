@@ -172,24 +172,107 @@ app.post('/api/offline/sync',auth,async(req,res)=>{
  return res.json(result);
 });
 
-app.post('/api/login',async(req,res)=>{
- const email=clean(req.body?.email),password=String(req.body?.password||'');if(!email)return res.status(400).json({error:'ایمیل را وارد کنید'});
- const adminEmail=clean(process.env.ADMIN_EMAIL),isEnvAdmin=!!adminEmail&&email.toLowerCase()===adminEmail.toLowerCase();let u=store.staff.find(x=>String(x.email||'').toLowerCase()===email.toLowerCase());
- if(!u&&isEnvAdmin){u={id:next('staff'),name:'مدیر دفتر',email:adminEmail,password_hash:null,role:'admin',active:true,created_at:now()};store.staff.push(u);await persist()}
- if(!u)return res.status(401).json({error:'حساب کاربری پیدا نشد'});if(!u.active)return res.status(401).json({error:'حساب فعال نیست'});
- const envPass=process.env.ADMIN_PASSWORD?String(process.env.ADMIN_PASSWORD):null;
- // The Render owner credentials are authoritative for the configured ADMIN_EMAIL.
- if(isEnvAdmin&&envPass&&password===envPass){
-   let changed=false;
-   if(u.role!=='admin'){u.role='admin';changed=true}
-   if(!u.name){u.name='مدیر دفتر';changed=true}
-   if(!u.password_hash||!bcrypt.compareSync(password,u.password_hash)){u.password_hash=bcrypt.hashSync(envPass,12);changed=true}
-   if(changed)await persist();
- }else if(!u.password_hash){return res.status(401).json({error:'رمز عبور تنظیم نشده یا اشتباه است'})}
- else if(!password||!bcrypt.compareSync(password,u.password_hash))return res.status(401).json({error:'رمز عبور اشتباه است'});
+async function establishSession(req,res,u){
  const sub=(await pool.query('SELECT tier,status,current_period_end,account_type FROM subscriptions WHERE user_id=$1',[u.id])).rows[0];
  const tier=u.role==='admin'?'enterprise':(sub?.status==='active'?sub.tier:'free');
- req.session.user={id:u.id,name:u.name,email:u.email,role:u.role,subscription_tier:tier,account_type:sub?.account_type||'consumer'};await audit(req,'login','session',u.id,'ورود به سیستم');res.json(req.session.user);
+ req.session.user={id:u.id,name:u.name,email:u.email,role:u.role,subscription_tier:tier,account_type:sub?.account_type||'consumer'};
+ await audit(req,'login','session',u.id,'ورود به سیستم');
+ return res.json(req.session.user);
+}
+function constantTimeEqual(a,b){
+ const aa=Buffer.from(String(a)),bb=Buffer.from(String(b));
+ return aa.length===bb.length&&crypto.timingSafeEqual(aa,bb);
+}
+app.post('/api/login',async(req,res)=>{
+ const email=clean(req.body?.email),password=String(req.body?.password||'');
+ if(!email)return res.status(400).json({error:'ایمیل را وارد کنید'});
+ const adminEmail=clean(process.env.ADMIN_EMAIL),envPass=process.env.ADMIN_PASSWORD?String(process.env.ADMIN_PASSWORD):'';
+ const isEnvAdmin=!!adminEmail&&email.toLowerCase()===adminEmail.toLowerCase();
+ let u=store.staff.find(x=>String(x.email||'').toLowerCase()===email.toLowerCase());
+ if(isEnvAdmin){
+   if(!envPass)return res.status(503).json({error:'تنظیم رمز مدیر در سرور ناقص است'});
+   if(!password||!constantTimeEqual(password,envPass))return res.status(401).json({error:'رمز عبور مدیر اشتباه است'});
+   if(!u){u={id:next('staff'),name:'مدیر دفتر',email:adminEmail,password_hash:null,role:'admin',active:true,created_at:now()};store.staff.push(u)}
+   let changed=false;
+   if(u.role!=='admin'){u.role='admin';changed=true}
+   if(!u.active){u.active=true;changed=true}
+   if(!u.name){u.name='مدیر دفتر';changed=true}
+   if(String(u.email)!==adminEmail){u.email=adminEmail;changed=true}
+   if(!u.password_hash||!bcrypt.compareSync(envPass,u.password_hash)){u.password_hash=bcrypt.hashSync(envPass,12);changed=true}
+   if(changed)await persist();
+   return establishSession(req,res,u);
+ }
+ if(!u)return res.status(401).json({error:'حساب کاربری پیدا نشد'});
+ if(!u.active)return res.status(401).json({error:'حساب فعال نیست'});
+ if(!u.password_hash)return res.status(401).json({error:'برای این حساب رمز تعریف نشده؛ از ورود با کد ایمیل استفاده کنید'});
+ if(!password||!bcrypt.compareSync(password,u.password_hash))return res.status(401).json({error:'رمز عبور اشتباه است'});
+ return establishSession(req,res,u);
+});
+async function ensureEmailCodeTable(){
+ await pool.query(`CREATE TABLE IF NOT EXISTS email_login_codes(
+  email TEXT PRIMARY KEY, code_hash TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0, last_sent_at TIMESTAMPTZ NOT NULL,
+  request_ip TEXT
+ )`);
+}
+function emailCodeHash(email,code){
+ return crypto.createHash('sha256').update(email.toLowerCase()+':'+code+':'+String(process.env.SESSION_SECRET||'')).digest('hex');
+}
+async function sendLoginCode(email,code){
+ const apiKey=clean(process.env.RESEND_API_KEY);
+ const from=clean(process.env.MAIL_FROM||process.env.RESEND_FROM_EMAIL);
+ if(!apiKey||!from)throw Object.assign(new Error('EMAIL_PROVIDER_NOT_CONFIGURED'),{status:503});
+ const response=await fetch('https://api.resend.com/emails',{
+  method:'POST',
+  headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
+  body:JSON.stringify({
+   from,to:[email],subject:'کد ورود AMLAK AI OFFICE',
+   text:'کد ورود شما: '+code+'\nاین کد تا ۱۰ دقیقه معتبر است. اگر این درخواست از طرف شما نیست، این پیام را نادیده بگیرید.',
+   html:'<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;line-height:2"><h2>ورود امن به AMLAK AI OFFICE</h2><p>کد یک‌بارمصرف شما:</p><p style="font-size:30px;font-weight:bold;letter-spacing:6px">'+code+'</p><p>این کد تا ۱۰ دقیقه معتبر است و فقط یک بار قابل استفاده است.</p><p>اگر این درخواست از طرف شما نیست، این پیام را نادیده بگیرید.</p></div>'
+  })
+ });
+ if(!response.ok){const detail=await response.text().catch(()=> '');console.error('Email provider rejected login code:',response.status,detail.slice(0,300));throw Object.assign(new Error('EMAIL_DELIVERY_FAILED'),{status:502})}
+}
+app.post('/api/auth/request-code',async(req,res)=>{
+ try{
+  await ensureEmailCodeTable();
+  const email=clean(req.body?.email).toLowerCase();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return res.status(400).json({error:'ایمیل معتبر وارد کنید'});
+  if(email===clean(process.env.ADMIN_EMAIL).toLowerCase())return res.status(400).json({error:'مدیر باید با رمز اختصاصی وارد شود'});
+  const u=store.staff.find(x=>String(x.email||'').toLowerCase()===email&&x.active);
+  // Do not reveal whether an address belongs to an account.
+  if(!u)return res.json({ok:true,message:'اگر حساب فعال باشد و سرویس ایمیل تنظیم شده باشد، کد ارسال می‌شود.'});
+  const previous=await pool.query('SELECT last_sent_at FROM email_login_codes WHERE email=$1',[email]);
+  if(previous.rows[0]&&Date.now()-new Date(previous.rows[0].last_sent_at).getTime()<60_000)
+   return res.status(429).json({error:'برای دریافت کد جدید، یک دقیقه صبر کنید'});
+  const code=String(crypto.randomInt(100000,1000000));
+  await sendLoginCode(email,code);
+  await pool.query(`INSERT INTO email_login_codes(email,code_hash,expires_at,attempts,last_sent_at,request_ip)
+   VALUES($1,$2,now()+interval '10 minutes',0,now(),$3)
+   ON CONFLICT(email) DO UPDATE SET code_hash=EXCLUDED.code_hash,expires_at=EXCLUDED.expires_at,attempts=0,last_sent_at=now(),request_ip=EXCLUDED.request_ip`,
+   [email,emailCodeHash(email,code),req.ip||null]);
+  res.json({ok:true,message:'کد ورود به ایمیل ارسال شد؛ تا ۱۰ دقیقه معتبر است.'});
+ }catch(e){console.error('Login-code request failed:',e.message);res.status(e.status||500).json({error:e.message==='EMAIL_PROVIDER_NOT_CONFIGURED'?'ارسال ایمیل هنوز در سرور تنظیم نشده است':'ارسال کد ناموفق بود؛ تنظیمات سرویس ایمیل را بررسی کنید'})}
+});
+app.post('/api/auth/verify-code',async(req,res)=>{
+ try{
+  await ensureEmailCodeTable();
+  const email=clean(req.body?.email).toLowerCase(),code=String(req.body?.code||'').trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!/^\d{6}$/.test(code))return res.status(400).json({error:'ایمیل و کد شش‌رقمی معتبر لازم است'});
+  if(email===clean(process.env.ADMIN_EMAIL).toLowerCase())return res.status(400).json({error:'مدیر باید با رمز اختصاصی وارد شود'});
+  const result=await pool.query('SELECT code_hash,expires_at,attempts FROM email_login_codes WHERE email=$1',[email]);
+  const row=result.rows[0];
+  if(!row||new Date(row.expires_at).getTime()<Date.now())return res.status(401).json({error:'کد منقضی شده یا درخواست نشده است'});
+  if(Number(row.attempts)>=5){await pool.query('DELETE FROM email_login_codes WHERE email=$1',[email]);return res.status(429).json({error:'تعداد تلاش بیش از حد؛ کد جدید درخواست کنید'})}
+  if(!constantTimeEqual(emailCodeHash(email,code),row.code_hash)){
+   await pool.query('UPDATE email_login_codes SET attempts=attempts+1 WHERE email=$1',[email]);
+   return res.status(401).json({error:'کد ورود اشتباه است'});
+  }
+  const u=store.staff.find(x=>String(x.email||'').toLowerCase()===email&&x.active);
+  await pool.query('DELETE FROM email_login_codes WHERE email=$1',[email]);
+  if(!u)return res.status(401).json({error:'حساب فعال نیست'});
+  return establishSession(req,res,u);
+ }catch(e){console.error('Email-code verification failed:',e.message);res.status(500).json({error:'تأیید کد ناموفق بود'})}
 });
 app.post('/api/logout',async(req,res)=>{const u=req.session.user;req.session.destroy(async()=>{if(u){store.activities.push({id:next('activities'),user_id:u.id,user_name:u.name,action:'logout',entity:'session',entity_id:u.id,details:'خروج',created_at:now()});await persist()}res.json({ok:true})})});
 app.get('/api/me',auth,(req,res)=>res.json(req.session.user));
