@@ -177,7 +177,14 @@ async function establishSession(req,res,u){
  const tier=u.role==='admin'?'enterprise':(sub?.status==='active'?sub.tier:'free');
  req.session.user={id:u.id,name:u.name,email:u.email,role:u.role,subscription_tier:tier,account_type:sub?.account_type||'consumer'};
  await audit(req,'login','session',u.id,'ورود به سیستم');
- return res.json(req.session.user);
+ // Persist the session before responding so the browser does not reload before PostgreSQL confirms it.
+ return req.session.save(err=>{
+   if(err){
+     console.error('Login session save failed:',err.message);
+     return res.status(500).json({error:'ذخیره نشست ورود ناموفق بود؛ دوباره تلاش کنید'});
+   }
+   return res.json(req.session.user);
+ });
 }
 function constantTimeEqual(a,b){
  const aa=Buffer.from(String(a)),bb=Buffer.from(String(b));
